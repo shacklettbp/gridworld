@@ -132,6 +132,7 @@ NB_MODULE(gridworld_madrona, m) {
                                 nb::c_contig, nb::device::cpu> end_cells,
                             int64_t start_x,
                             int64_t start_y,
+                            int64_t max_episode_length,
                             madrona::py::PyExecMode exec_mode,
                             int64_t num_worlds,
                             int64_t gpu_id) {
@@ -147,6 +148,7 @@ NB_MODULE(gridworld_madrona, m) {
                 setupCellData(walls, rewards, end_cells, grid_x, grid_y);
 
             new (self) Manager(Manager::Config {
+                .maxEpisodeLength = (uint32_t)max_episode_length,
                 .execMode = exec_mode,
                 .numWorlds = (uint32_t)num_worlds,
                 .gpuID = (int)gpu_id,
@@ -164,6 +166,7 @@ NB_MODULE(gridworld_madrona, m) {
            nb::arg("end_cells"),
            nb::arg("start_x"),
            nb::arg("start_y"),
+           nb::arg("max_episode_length"),
            nb::arg("exec_mode"),
            nb::arg("num_worlds"),
            nb::arg("gpu_id") = -1)

@@ -29,6 +29,7 @@ class GridWorld:
                 end_cells=end_cells,
                 start_x = start_cell[0],
                 start_y = start_cell[1],
+                max_episode_length = 0, # No max
                 exec_mode = madrona_python.ExecMode.CPU,
                 num_worlds = num_worlds,
             )
@@ -62,6 +63,8 @@ rewards[4,5] = 1
 
 grid_world = GridWorld(start_cell, end_cell, rewards, walls)
 #grid_world.vis_world()
+
+print(grid_world.observations.shape)
 
 for i in range(5):
     print("Obs:")
