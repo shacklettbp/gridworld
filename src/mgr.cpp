@@ -52,7 +52,7 @@ struct Manager::CPUImpl final : Manager::Impl {
                    EpisodeManager *episode_mgr,
                    GridState *grid_data,
                    WorldInit *world_inits)
-        : Impl(mgr_cfg, episode_mgr, grid_state),
+        : Impl(mgr_cfg, episode_mgr, grid_data),
           cpuExec({
                   .numWorlds = mgr_cfg.numWorlds,
                   .numExportedBuffers = (uint32_t)ExportID::NumExports,
@@ -61,7 +61,7 @@ struct Manager::CPUImpl final : Manager::Impl {
 
     inline virtual ~CPUImpl() final {
         delete episodeMgr;
-        free(grid);
+        free(gridData);
     }
 
     inline virtual void run() final { cpuExec.run(); }
@@ -84,7 +84,7 @@ struct Manager::GPUImpl final : Manager::Impl {
                    EpisodeManager *episode_mgr,
                    GridState *grid_data,
                    WorldInit *world_inits)
-        : Impl(mgr_cfg, episode_mgr),
+        : Impl(mgr_cfg, episode_mgr, grid_data),
           gpuExec({
                   .worldInitPtr = world_inits,
                   .numWorldInitBytes = sizeof(WorldInit),
@@ -106,6 +106,7 @@ struct Manager::GPUImpl final : Manager::Impl {
 
     inline virtual ~GPUImpl() final {
         REQ_CUDA(cudaFree(episodeMgr));
+        REQ_CUDA(cudaFree(gridData));
     }
 
     inline virtual void run() final { gpuExec.run(); }
@@ -154,20 +155,21 @@ Manager::Impl * Manager::Impl::init(const Config &cfg,
 
         auto *grid_data =
             (char *)malloc(sizeof(GridState) + num_cell_bytes);
+        Cell *cpu_cell_data = (Cell *)(grid_data + sizeof(GridState));
 
         GridState *cpu_grid = (GridState *)grid_data;
         *cpu_grid = GridState {
-            .cells = gpu_cell_data,
-            .startCell = src_grid.startCell,
+            .cells = cpu_cell_data,
+            .startX = src_grid.startX,
+            .startY = src_grid.startY,
             .width = src_grid.width,
             .height = src_grid.height,
         };
 
-        Cell *cpu_cell_data = (Cell *)(grid_data + sizeof(GridState));
         memcpy(cpu_cell_data, src_grid.cells, num_cell_bytes);
 
         HeapArray<WorldInit> world_inits = setupWorldInitData(cfg.numWorlds,
-            cpu_grid, episode_mgr, grid);
+            episode_mgr, cpu_grid);
 
         return new CPUImpl(cfg, sim_cfg, episode_mgr, cpu_grid,
                            world_inits.data());
@@ -190,7 +192,8 @@ Manager::Impl * Manager::Impl::init(const Config &cfg,
         Cell *gpu_cell_data = (Cell *)(grid_data + sizeof(GridState));
         GridState grid_staging {
             .cells = gpu_cell_data,
-            .startCell = src_grid.startCell,
+            .startX = src_grid.startX,
+            .startY = src_grid.startY,
             .width = src_grid.width,
             .height = src_grid.height,
         };
@@ -233,7 +236,7 @@ Tensor Manager::resetTensor() const
 
 Tensor Manager::actionTensor() const
 {
-    return impl_->exportTensor(ExportID::Action, Tensor::ElementType::Float32,
+    return impl_->exportTensor(ExportID::Action, Tensor::ElementType::Int32,
         {impl_->cfg.numWorlds, 1});
 }
 

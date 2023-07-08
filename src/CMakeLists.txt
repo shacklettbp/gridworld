@@ -37,7 +37,7 @@ if (TARGET madrona_mw_gpu)
             ${SIMULATOR_SRCS}
     )
 
-    target_link_libraries(_mgr PRIVATE
+    target_link_libraries(gridworld_madrona_mgr PRIVATE
         gridworld_madrona_gpu_srcs
         madrona_mw_gpu
     )

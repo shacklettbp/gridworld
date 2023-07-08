@@ -15,6 +15,7 @@ void Sim::registerTypes(ECSRegistry &registry, const Config &)
     registry.registerComponent<GridPos>();
     registry.registerComponent<Reward>();
     registry.registerComponent<Done>();
+    registry.registerComponent<CurStep>();
 
     registry.registerArchetype<Agent>();
 
@@ -34,7 +35,7 @@ inline void tick(Engine &ctx,
                  Done &done,
                  CurStep &episode_step)
 {
-    const Grid *grid = ctx.data().grid;
+    const GridState *grid = ctx.data().grid;
 
     GridPos new_pos = grid_pos;
 
@@ -53,6 +54,7 @@ inline void tick(Engine &ctx,
         } break;
         default: break;
     }
+
     action = Action::None;
 
     if (new_pos.x < 0) {
@@ -71,10 +73,11 @@ inline void tick(Engine &ctx,
         new_pos.y = grid->height -1;
     }
 
+
     {
         const Cell &new_cell = grid->cells[new_pos.y * grid->width + new_pos.x];
 
-        if ((new_cell->flags & CellFlag::Wall)) {
+        if ((new_cell.flags & CellFlag::Wall)) {
             new_pos = grid_pos;
         }
     }
@@ -119,9 +122,8 @@ inline void tick(Engine &ctx,
 void Sim::setupTasks(TaskGraph::Builder &builder, const Config &)
 {
     builder.addToGraph<ParallelForNode<Engine, tick,
-        Action, GridPos>>({});
+        Action, Reset, GridPos, Reward, Done, CurStep>>({});
 }
-
 
 Sim::Sim(Engine &ctx, const Config &cfg, const WorldInit &init)
     : WorldBase(ctx),

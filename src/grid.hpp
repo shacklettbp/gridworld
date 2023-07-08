@@ -16,10 +16,10 @@ struct Cell {
 struct GridState {
     const Cell *cells;
 
-    uint32_t startX;
-    uint32_t startY;
-    uint32_t width;
-    uint32_t height;
+    int32_t startX;
+    int32_t startY;
+    int32_t width;
+    int32_t height;
 };
 
 inline CellFlag & operator|=(CellFlag &a, CellFlag b)

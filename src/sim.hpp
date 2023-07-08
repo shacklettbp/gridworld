@@ -29,11 +29,11 @@ struct Reset {
     int32_t resetNow;
 };
 
-enum class Action {
-    Up,
-    Down,
-    Left,
-    Right,
+enum class Action : int32_t {
+    Up    = 0,
+    Down  = 1,
+    Left  = 2,
+    Right = 3,
     None,
 };
 
@@ -55,6 +55,7 @@ struct CurStep {
 };
 
 struct Agent : public madrona::Archetype<
+    Reset,
     Action,
     GridPos,
     Reward,
