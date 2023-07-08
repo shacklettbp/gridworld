@@ -1,14 +1,18 @@
 #pragma once
 
-namespace SimpleExample {
+#include <madrona/sync.hpp>
+
+#include "grid.hpp"
+
+namespace madgrid {
 
 struct EpisodeManager {
-    std::atomic_uint32_t curEpisode;
+    madrona::AtomicU32 curEpisode;
 };
 
 struct WorldInit {
     EpisodeManager *episodeMgr;
-    int32_t numAgents;
+    const GridState *grid;
 };
 
 }

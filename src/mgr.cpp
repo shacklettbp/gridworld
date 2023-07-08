@@ -19,24 +19,28 @@
 using namespace madrona;
 using namespace madrona::py;
 
-namespace SimpleExample {
+namespace madgrid {
 
 struct Manager::Impl {
     Config cfg;
     EpisodeManager *episodeMgr;
+    GridState *gridData;
 
-    inline Impl(const Config &c, EpisodeManager *ep_mgr)
+    inline Impl(const Config &c,
+                EpisodeManager *ep_mgr,
+                GridState *grid_data)
         : cfg(c),
-          episodeMgr(ep_mgr)
+          episodeMgr(ep_mgr),
+          gridData(grid_data)
     {}
 
     inline virtual ~Impl() {}
 
     virtual void run() = 0;
-    virtual Tensor exportTensor(CountT slot, Tensor::ElementType type,
+    virtual Tensor exportTensor(ExportID slot, Tensor::ElementType type,
                                 Span<const int64_t> dims) = 0;
 
-    static inline Impl * init(const Config &cfg);
+    static inline Impl * init(const Config &cfg, const GridState &src_grid);
 };
 
 struct Manager::CPUImpl final : Manager::Impl {
@@ -46,29 +50,27 @@ struct Manager::CPUImpl final : Manager::Impl {
     inline CPUImpl(const Manager::Config &mgr_cfg,
                    const Sim::Config &sim_cfg,
                    EpisodeManager *episode_mgr,
-                   WorldInit *world_inits,
-                   uint32_t num_exported_buffers)
-        : Impl(mgr_cfg, episode_mgr),
+                   GridState *grid_data,
+                   WorldInit *world_inits)
+        : Impl(mgr_cfg, episode_mgr, grid_state),
           cpuExec({
                   .numWorlds = mgr_cfg.numWorlds,
-                  .renderWidth = 0,
-                  .renderHeight = 0,
-                  .numExportedBuffers = num_exported_buffers,
-                  .cameraMode = render::CameraMode::None,
+                  .numExportedBuffers = (uint32_t)ExportID::NumExports,
               }, sim_cfg, world_inits)
     {}
 
     inline virtual ~CPUImpl() final {
         delete episodeMgr;
+        free(grid);
     }
 
     inline virtual void run() final { cpuExec.run(); }
     
-    inline virtual Tensor exportTensor(CountT slot,
+    inline virtual Tensor exportTensor(ExportID slot,
                                        Tensor::ElementType type,
                                        Span<const int64_t> dims) final
     {
-        void *dev_ptr = cpuExec.getExported(slot);
+        void *dev_ptr = cpuExec.getExported((uint32_t)slot);
         return Tensor(dev_ptr, type, dims, Optional<int>::none());
     }
 };
@@ -80,8 +82,8 @@ struct Manager::GPUImpl final : Manager::Impl {
     inline GPUImpl(const Manager::Config &mgr_cfg,
                    const Sim::Config &sim_cfg,
                    EpisodeManager *episode_mgr,
-                   WorldInit *world_inits,
-                   uint32_t num_exported_buffers)
+                   GridState *grid_data,
+                   WorldInit *world_inits)
         : Impl(mgr_cfg, episode_mgr),
           gpuExec({
                   .worldInitPtr = world_inits,
@@ -91,11 +93,8 @@ struct Manager::GPUImpl final : Manager::Impl {
                   .numWorldDataBytes = sizeof(Sim),
                   .worldDataAlignment = alignof(Sim),
                   .numWorlds = mgr_cfg.numWorlds,
-                  .numExportedBuffers = num_exported_buffers, 
+                  .numExportedBuffers = (uint32_t)ExportID::NumExports, 
                   .gpuID = (uint32_t)mgr_cfg.gpuID,
-                  .cameraMode = render::CameraMode::None,
-                  .renderWidth = 0,
-                  .renderHeight = 0,
               }, {
                   "",
                   { SIMPLE_SRC_LIST },
@@ -111,44 +110,67 @@ struct Manager::GPUImpl final : Manager::Impl {
 
     inline virtual void run() final { gpuExec.run(); }
     
-    virtual inline Tensor exportTensor(CountT slot, Tensor::ElementType type,
+    virtual inline Tensor exportTensor(ExportID slot, Tensor::ElementType type,
                                        Span<const int64_t> dims) final
     {
-        void *dev_ptr = gpuExec.getExported(slot);
+        void *dev_ptr = gpuExec.getExported((uint32_t)slot);
         return Tensor(dev_ptr, type, dims, cfg.gpuID);
     }
 };
 #endif
 
 static HeapArray<WorldInit> setupWorldInitData(int64_t num_worlds,
-                                               int64_t num_agents_per_world,
-                                               EpisodeManager *episode_mgr)
+                                               EpisodeManager *episode_mgr,
+                                               const GridState *grid)
 {
     HeapArray<WorldInit> world_inits(num_worlds);
 
     for (int64_t i = 0; i < num_worlds; i++) {
         world_inits[i] = WorldInit {
             episode_mgr,
-            int32_t(num_agents_per_world),
+            grid,
         };
     }
 
     return world_inits;
 }
 
-Manager::Impl * Manager::Impl::init(const Config &cfg)
+Manager::Impl * Manager::Impl::init(const Config &cfg,
+                                    const GridState &src_grid)
 {
-    const int64_t num_exported_buffers = 3;
+    static_assert(sizeof(GridState) % alignof(Cell) == 0);
+
+    Sim::Config sim_cfg {
+        .maxEpisodeLength = cfg.maxEpisodeLength,
+        .enableViewer = false,
+    };
 
     switch (cfg.execMode) {
     case ExecMode::CPU: {
         EpisodeManager *episode_mgr = new EpisodeManager { 0 };
 
-        HeapArray<WorldInit> world_inits = setupWorldInitData(cfg.numWorlds,
-            cfg.numAgentsPerWorld, episode_mgr);
+        uint64_t num_cell_bytes =
+            sizeof(Cell) * src_grid.width * src_grid.height;
 
-        return new CPUImpl(cfg, {}, episode_mgr, world_inits.data(),
-                       num_exported_buffers);
+        auto *grid_data =
+            (char *)malloc(sizeof(GridState) + num_cell_bytes);
+
+        GridState *cpu_grid = (GridState *)grid_data;
+        *cpu_grid = GridState {
+            .cells = gpu_cell_data,
+            .startCell = src_grid.startCell,
+            .width = src_grid.width,
+            .height = src_grid.height,
+        };
+
+        Cell *cpu_cell_data = (Cell *)(grid_data + sizeof(GridState));
+        memcpy(cpu_cell_data, src_grid.cells, num_cell_bytes);
+
+        HeapArray<WorldInit> world_inits = setupWorldInitData(cfg.numWorlds,
+            cpu_grid, episode_mgr, grid);
+
+        return new CPUImpl(cfg, sim_cfg, episode_mgr, cpu_grid,
+                           world_inits.data());
     } break;
     case ExecMode::CUDA: {
 #ifndef MADRONA_CUDA_SUPPORT
@@ -159,44 +181,78 @@ Manager::Impl * Manager::Impl::init(const Config &cfg)
         // Set the current episode count to 0
         REQ_CUDA(cudaMemset(episode_mgr, 0, sizeof(EpisodeManager)));
 
-        HeapArray<WorldInit> world_inits = setupWorldInitData(cfg.numWorlds,
-            cfg.numAgentsPerWorld, episode_mgr);
+        uint64_t num_cell_bytes =
+            sizeof(Cell) * src_grid.width * src_grid.height;
 
-        return new GPUImpl(cfg, {}, episode_mgr, world_inits.data(),
-                           num_exported_buffers);
+        auto *grid_data =
+            (char *)cu::allocGPU(sizeof(GridState) + num_cell_bytes);
+
+        Cell *gpu_cell_data = (Cell *)(grid_data + sizeof(GridState));
+        GridState grid_staging {
+            .cells = gpu_cell_data,
+            .startCell = src_grid.startCell,
+            .width = src_grid.width,
+            .height = src_grid.height,
+        };
+
+        cudaMemcpy(grid_data, &grid_staging, sizeof(GridState),
+                   cudaMemcpyHostToDevice);
+        cudaMemcpy(gpu_cell_data, src_grid.cells, num_cell_bytes,
+                   cudaMemcpyHostToDevice);
+
+        GridState *gpu_grid = (GridState *)grid_data;
+
+        HeapArray<WorldInit> world_inits = setupWorldInitData(cfg.numWorlds,
+            episode_mgr, gpu_grid);
+
+        return new GPUImpl(cfg, sim_cfg, episode_mgr, gpu_grid,
+                           world_inits.data());
 #endif
     } break;
     default: return nullptr;
     }
 }
 
-MADRONA_EXPORT Manager::Manager(const Config &cfg)
-    : impl_(Impl::init(cfg))
+Manager::Manager(const Config &cfg,
+                 const GridState &src_grid)
+    : impl_(Impl::init(cfg, src_grid))
 {}
 
-MADRONA_EXPORT Manager::~Manager() {}
+Manager::~Manager() {}
 
-MADRONA_EXPORT void Manager::step()
+void Manager::step()
 {
     impl_->run();
 }
 
-MADRONA_EXPORT Tensor Manager::resetTensor() const
+Tensor Manager::resetTensor() const
 {
-    return impl_->exportTensor(0, Tensor::ElementType::Int32,
+    return impl_->exportTensor(ExportID::Reset, Tensor::ElementType::Int32,
                                {impl_->cfg.numWorlds, 1});
 }
 
-MADRONA_EXPORT Tensor Manager::actionTensor() const
+Tensor Manager::actionTensor() const
 {
-    return impl_->exportTensor(1, Tensor::ElementType::Float32,
-        {impl_->cfg.numWorlds, impl_->cfg.numAgentsPerWorld, 3});
+    return impl_->exportTensor(ExportID::Action, Tensor::ElementType::Float32,
+        {impl_->cfg.numWorlds, 1});
 }
 
-MADRONA_EXPORT Tensor Manager::positionTensor() const
+Tensor Manager::observationTensor() const
 {
-    return impl_->exportTensor(2, Tensor::ElementType::Float32,
-        {impl_->cfg.numWorlds, impl_->cfg.numAgentsPerWorld, 3});
+    return impl_->exportTensor(ExportID::GridPos, Tensor::ElementType::Int32,
+        {impl_->cfg.numWorlds, 2});
+}
+
+Tensor Manager::rewardTensor() const
+{
+    return impl_->exportTensor(ExportID::Reward, Tensor::ElementType::Float32,
+        {impl_->cfg.numWorlds, 1});
+}
+
+Tensor Manager::doneTensor() const
+{
+    return impl_->exportTensor(ExportID::Done, Tensor::ElementType::Float32,
+        {impl_->cfg.numWorlds, 1});
 }
 
 }

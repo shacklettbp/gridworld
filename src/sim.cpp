@@ -4,100 +4,140 @@
 using namespace madrona;
 using namespace madrona::math;
 
-namespace SimpleExample {
-
-constexpr inline float deltaT = 1.f / 30.f;
+namespace madgrid {
 
 void Sim::registerTypes(ECSRegistry &registry, const Config &)
 {
     base::registerTypes(registry);
 
+    registry.registerComponent<Reset>();
     registry.registerComponent<Action>();
-
-    registry.registerSingleton<WorldReset>();
+    registry.registerComponent<GridPos>();
+    registry.registerComponent<Reward>();
+    registry.registerComponent<Done>();
 
     registry.registerArchetype<Agent>();
 
     // Export tensors for pytorch
-    registry.exportSingleton<WorldReset>(0);
-    registry.exportColumn<Agent, Action>(1);
-    registry.exportColumn<Agent, Position>(2);
+    registry.exportColumn<Agent, Reset>((uint32_t)ExportID::Reset);
+    registry.exportColumn<Agent, Action>((uint32_t)ExportID::Action);
+    registry.exportColumn<Agent, GridPos>((uint32_t)ExportID::GridPos);
+    registry.exportColumn<Agent, Reward>((uint32_t)ExportID::Reward);
+    registry.exportColumn<Agent, Done>((uint32_t)ExportID::Done);
 }
 
-static void resetWorld(Engine &ctx)
+inline void tick(Engine &ctx,
+                 Action &action,
+                 Reset &reset,
+                 GridPos &grid_pos,
+                 Reward &reward,
+                 Done &done,
+                 CurStep &episode_step)
 {
-    // Update the RNG seed for a new episode
-    EpisodeManager &episode_mgr = *ctx.data().episodeMgr;
-    uint32_t episode_idx =
-        episode_mgr.curEpisode.fetch_add(1, std::memory_order_relaxed);
-    ctx.data().rng = RNG::make(episode_idx);
+    const Grid *grid = ctx.data().grid;
 
-    const math::Vector2 bounds { -10.f, 10.f };
-    float bounds_diff = bounds.y - bounds.x;
+    GridPos new_pos = grid_pos;
 
-    for (int32_t i = 0; i < ctx.data().numAgents; i++) {
-        Entity agent = ctx.data().agents[i];
+    switch (action) {
+        case Action::Up: {
+            new_pos.y += 1;
+        } break;
+        case Action::Down: {
+            new_pos.y -= 1;
+        } break;
+        case Action::Left: {
+            new_pos.x -= 1;
+        } break;
+        case Action::Right: {
+            new_pos.x += 1;
+        } break;
+        default: break;
+    }
+    action = Action::None;
 
-        math::Vector3 pos {
-            bounds.x + ctx.data().rng.rand() * bounds_diff,
-            bounds.x + ctx.data().rng.rand() * bounds_diff,
-            1.f,
+    if (new_pos.x < 0) {
+        new_pos.x = 0;
+    }
+
+    if (new_pos.x >= grid->width) {
+        new_pos.x = grid->width - 1;
+    }
+
+    if (new_pos.y < 0) {
+        new_pos.y = 0;
+    }
+
+    if (new_pos.y >= grid->height) {
+        new_pos.y = grid->height -1;
+    }
+
+    {
+        const Cell &new_cell = grid->cells[new_pos.y * grid->width + new_pos.x];
+
+        if ((new_cell->flags & CellFlag::Wall)) {
+            new_pos = grid_pos;
+        }
+    }
+
+    const Cell &cur_cell = grid->cells[new_pos.y * grid->width + new_pos.x];
+
+    bool episode_done = false;
+    if (reset.resetNow != 0) {
+        reset.resetNow = 0;
+        episode_done = true;
+    }
+
+    if ((cur_cell.flags & CellFlag::End)) {
+        episode_done = true;
+    }
+
+    uint32_t cur_step = episode_step.step;
+
+    if (cur_step == ctx.data().maxEpisodeLength - 1) {
+        episode_done = true;
+    }
+
+    if (episode_done) {
+        done.episodeDone = 1.f;
+
+        new_pos = GridPos {
+            grid->startX,
+            grid->startY,
         };
 
-        ctx.getUnsafe<Position>(agent) = pos;
+        episode_step.step = 0;
+    } else {
+        done.episodeDone = 0.f;
+        episode_step.step = cur_step + 1;
     }
-}
 
-inline void resetSystem(Engine &ctx, WorldReset &reset)
-{
-    if (!reset.resetNow) {
-        return;
-    }
-    reset.resetNow = false;
-
-    resetWorld(ctx);
-}
-
-inline void actionSystem(Engine &, Action &action, Position &pos)
-{
-    // Update agent's position
-    pos += action.positionDelta;
-
-    // Clear action for next step
-    action.positionDelta = Vector3 {0, 0, 0};
+    // Commit new position
+    grid_pos = new_pos;
+    reward.r = cur_cell.reward;
 }
 
 void Sim::setupTasks(TaskGraph::Builder &builder, const Config &)
 {
-    auto reset_sys =
-        builder.addToGraph<ParallelForNode<Engine, resetSystem, WorldReset>>({});
-
-    auto action_sys = builder.addToGraph<ParallelForNode<Engine, actionSystem,
-        Action, Position>>({reset_sys});
-
-    (void)action_sys;
-
-    printf("Setup done\n");
+    builder.addToGraph<ParallelForNode<Engine, tick,
+        Action, GridPos>>({});
 }
 
 
-Sim::Sim(Engine &ctx, const Config &, const WorldInit &init)
+Sim::Sim(Engine &ctx, const Config &cfg, const WorldInit &init)
     : WorldBase(ctx),
-      episodeMgr(init.episodeMgr)
+      episodeMgr(init.episodeMgr),
+      grid(init.grid),
+      maxEpisodeLength(cfg.maxEpisodeLength)
 {
-    // Make a buffer that will last the duration of simulation for storing
-    // agent entity IDs
-    agents = (Entity *)rawAlloc(sizeof(Entity) * init.numAgents);
-
-    for (int32_t i = 0; i < init.numAgents; i++) {
-        agents[i] = ctx.makeEntityNow<Agent>();
-
-        ctx.getUnsafe<Action>(agents[i]).positionDelta = Vector3 {0, 0, 0};
-    }
-
-    // Initial reset
-    resetWorld(ctx);
-    ctx.getSingleton<WorldReset>().resetNow = false;
+    Entity agent = ctx.makeEntity<Agent>();
+    ctx.get<Action>(agent) = Action::None;
+    ctx.get<GridPos>(agent) = GridPos {
+        grid->startX,
+        grid->startY,
+    };
+    ctx.get<Reward>(agent).r = 0.f;
+    ctx.get<Done>(agent).episodeDone = 0.f;
+    ctx.get<CurStep>(agent).step = 0;
 }
 
 MADRONA_BUILD_MWGPU_ENTRY(Engine, Sim, Sim::Config, WorldInit);

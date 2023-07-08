@@ -6,9 +6,8 @@
 #include <madrona/components.hpp>
 
 #include "init.hpp"
-#include "rng.hpp"
 
-namespace SimpleExample {
+namespace madgrid {
 
 // 3D Position & Quaternion Rotation
 // These classes are defined in madrona/components.hpp
@@ -17,21 +16,57 @@ using madrona::base::Rotation;
 
 class Engine;
 
-struct WorldReset {
+enum class ExportID : uint32_t {
+    Reset,
+    Action,
+    GridPos,
+    Reward,
+    Done,
+    NumExports,
+};
+
+struct Reset {
     int32_t resetNow;
 };
 
-struct Action {
-    madrona::math::Vector3 positionDelta; // Continuous action
+enum class Action {
+    Up,
+    Down,
+    Left,
+    Right,
+    None,
+};
+
+struct GridPos {
+    int32_t x;
+    int32_t y;
+};
+
+struct Reward {
+    float r;
+};
+
+struct Done {
+    float episodeDone;
+};
+
+struct CurStep {
+    uint32_t step;
 };
 
 struct Agent : public madrona::Archetype<
-    Position,
-    Action
+    Action,
+    GridPos,
+    Reward,
+    Done,
+    CurStep
 > {};
 
 struct Sim : public madrona::WorldBase {
-    struct Config {};
+    struct Config {
+        uint32_t maxEpisodeLength;
+        bool enableViewer;
+    };
 
     static void registerTypes(madrona::ECSRegistry &registry,
                               const Config &cfg);
@@ -42,10 +77,8 @@ struct Sim : public madrona::WorldBase {
     Sim(Engine &ctx, const Config &cfg, const WorldInit &init);
 
     EpisodeManager *episodeMgr;
-    RNG rng;
-
-    madrona::Entity *agents;
-    int32_t numAgents;
+    const GridState *grid;
+    uint32_t maxEpisodeLength;
 };
 
 class Engine : public ::madrona::CustomContext<Engine, Sim> {
