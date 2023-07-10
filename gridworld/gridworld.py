@@ -6,7 +6,6 @@ import sys
 import pathlib
 sys.path.append(str(pathlib.Path(__file__).parent.parent / "build"))
 import gridworld_madrona
-import madrona_python
 import torch
 
 num_worlds = int(sys.argv[1])
@@ -30,7 +29,7 @@ class GridWorld:
                 start_x = start_cell[0],
                 start_y = start_cell[1],
                 max_episode_length = 0, # No max
-                exec_mode = madrona_python.ExecMode.CPU,
+                exec_mode = gridworld_madrona.madrona.ExecMode.CPU,
                 num_worlds = num_worlds,
             )
 
