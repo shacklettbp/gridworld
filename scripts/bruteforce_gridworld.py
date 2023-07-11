@@ -8,6 +8,7 @@ import pickle as pkl
 import pathlib
 
 from gridworld import GridWorld
+from tabular_policy import TabularPolicy
 
 #from torch_discounted_cumsum import discounted_cumsum_right
 
@@ -21,16 +22,28 @@ grid_world = GridWorld(num_worlds, start_cell, end_cell, rewards, walls)
 
 print(grid_world.observations.shape)
 
+# We index into observation state by doing row_id*num_cols + col_id
+num_rows = walls.shape[0]
+num_cols = walls.shape[1]
+policy = TabularPolicy(num_rows * num_cols, 4, greedy = False)
+
 obs_list = []
 action_list = []
 reward_list = []
 done_list = [torch.zeros(num_worlds, 1)]
 
 for i in range(num_steps):
-    obs_list.append(grid_world.observations.clone())
+    #print(i)
+    curr_obs = grid_world.observations.clone()
+    obs_list.append(curr_obs)
 
     # "Policy"
-    grid_world.actions[:, 0] = torch.randint(0, 4, size=(num_worlds,))
+    #grid_world.actions[:, 0] = torch.randint(0, 4, size=(num_worlds,))
+    flattened_obs = curr_obs[:,1]*num_cols + curr_obs[:,0]
+    #print(curr_obs[:,0], curr_obs[:,1], flattened_obs)
+    acts = policy(flattened_obs)
+    #print(acts)
+    grid_world.actions[:,:] = acts
 
     action_list.append(grid_world.actions.clone())
 
