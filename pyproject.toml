@@ -1,0 +1,13 @@
+[build-system]
+requires = []
+build-backend = "madrona-py-build"
+backend-path = ["external/madrona/py"]
+
+[project]
+name = "gridworld"
+version = "0.0.1"
+
+[tool.madrona.packages.gridworld]
+path = "src/gridworld"
+ext-out-dir = "build"
+extensions = [ "_gridworld_madrona" ]

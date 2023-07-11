@@ -108,7 +108,7 @@ static Cell * setupCellData(
     return cells;
 }
 
-NB_MODULE(gridworld_madrona, m) {
+NB_MODULE(_gridworld_madrona, m) {
     madrona::py::setupMadronaSubmodule(m);
 
     nb::class_<Manager> (m, "GridWorldSimulator")

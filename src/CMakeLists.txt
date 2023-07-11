@@ -47,11 +47,11 @@ target_compile_definitions(gridworld_madrona_mgr PRIVATE
     -DDATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../data/"
 )
 
-madrona_python_module(gridworld_madrona
+madrona_python_module(_gridworld_madrona
     bindings.cpp
 )
 
-target_link_libraries(gridworld_madrona PRIVATE
+target_link_libraries(_gridworld_madrona PRIVATE
     madrona_hdrs
     gridworld_madrona_mgr
 )
