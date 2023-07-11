@@ -5,13 +5,16 @@ import matplotlib.pyplot as plt
 import sys
 import torch
 import pickle as pkl
+import pathlib
 
 from gridworld import GridWorld
+
+#from torch_discounted_cumsum import discounted_cumsum_right
 
 num_worlds = int(sys.argv[1])
 num_steps = int(sys.argv[2])
 
-with open("./world_configs/test_world.pkl", 'rb') as handle:
+with open(pathlib.Path(__file__).parent / "world_configs/test_world.pkl", 'rb') as handle:
     start_cell, end_cell, rewards, walls = pkl.load(handle)
 grid_world = GridWorld(num_worlds, start_cell, end_cell, rewards, walls)
 #grid_world.vis_world()
@@ -56,6 +59,8 @@ M[torch.repeat_interleave(torch.arange(num_worlds), num_steps), episode_ids.flat
 
 filtered_rewards = M * rewards[:,:,0][:,None,:]
 aggregate_rewards = torch.flip(torch.cumsum(torch.flip(filtered_rewards, dims=[2]), dim=2), dims=[2])
+#aggregate_rewards = discounted_cumsum_right(filtered_rewards.reshape(-1,filtered_rewards.shape[2]), 1.0).reshape(filtered_rewards.shape)
+
 aggregate_rewards *= M
 aggregate_rewards = torch.sum(aggregate_rewards, dim = 1)
 
