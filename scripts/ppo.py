@@ -82,7 +82,7 @@ madrona_learn.train(madrona_learn.SimInterface(
             entropy_coef=0.01,
             max_grad_norm=5,
             num_epochs=1,
-            clip_value_loss=False,
+            clip_value_loss=True,
         ),
     ),
     policy,
