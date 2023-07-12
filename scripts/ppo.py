@@ -48,12 +48,13 @@ else:
 
 num_rows = walls.shape[0]
 num_cols = walls.shape[1]
+
 num_states = num_rows * num_cols
 num_actions = 4 
 
 def to1D(obs):
     with torch.no_grad():
-        obs_1d = obs[:, 1] * num_cols + obs[:, 0]
+        obs_1d = obs[:, 0] * num_cols + obs[:, 1]
         return obs_1d.view(*obs.shape[:-1], 1)
 
 policy = madrona_learn.ActorCritic(
@@ -62,7 +63,7 @@ policy = madrona_learn.ActorCritic(
     critic = PPOTabularCritic(num_states),
 )
 
-madrona_learn.train(madrona_learn.SimInterface(
+trained = madrona_learn.train(madrona_learn.SimInterface(
         step = lambda: world.step(),
         obs = [world.observations],
         actions = world.actions,
@@ -89,5 +90,33 @@ madrona_learn.train(madrona_learn.SimInterface(
     dev = dev,
 )
 
-print(policy.actor.tbl.policy)
-print(policy.critic.tbl.V)
+print("\nAction probs:")
+for i in range(policy.actor.tbl.policy.shape[0]):
+    probs = madrona_learn.DiscreteActionDistributions([num_actions], policy.actor.tbl.policy[i].unsqueeze(0)).dists[0].probs.detach().numpy()[0]
+
+    row = i // num_cols
+    col = i % num_cols
+
+    print(f"  {row}, {col}: [{probs[0]:.2f} {probs[1]:.2f} {probs[2]:.2f} {probs[3]:.2f}]")
+
+print(f"Grid size: {num_rows} x {num_cols}")
+print(rewards)
+print(walls)
+print("\nV:")
+
+V = policy.critic.tbl.V.view(num_rows, num_cols)
+for r in range(num_rows):
+    for c in range(num_cols):
+        print(f"{V[r, c]: .2f} ", end='')
+    print()
+
+world.force_reset[0] = 1
+world.step()
+
+with torch.no_grad():
+    for i in range(10):
+        print(world.observations[0])
+        trained.actor.infer(to1D(world.observations[0:1]), world.actions[0:1])
+        print(world.actions[0])
+        print()
+        world.step()

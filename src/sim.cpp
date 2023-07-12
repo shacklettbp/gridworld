@@ -104,8 +104,8 @@ inline void tick(Engine &ctx,
         done.episodeDone = 1.f;
 
         new_pos = GridPos {
-            grid->startX,
             grid->startY,
+            grid->startX,
         };
 
         episode_step.step = 0;
@@ -134,8 +134,8 @@ Sim::Sim(Engine &ctx, const Config &cfg, const WorldInit &init)
     Entity agent = ctx.makeEntity<Agent>();
     ctx.get<Action>(agent) = Action::None;
     ctx.get<GridPos>(agent) = GridPos {
-        grid->startX,
         grid->startY,
+        grid->startX,
     };
     ctx.get<Reward>(agent).r = 0.f;
     ctx.get<Done>(agent).episodeDone = 0.f;

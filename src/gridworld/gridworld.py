@@ -20,8 +20,8 @@ class GridWorld:
                 walls=walls,
                 rewards=rewards,
                 end_cells=end_cells,
-                start_x = start_cell[0],
-                start_y = start_cell[1],
+                start_x = start_cell[1],
+                start_y = start_cell[0],
                 max_episode_length = 0, # No max
                 exec_mode = madrona.ExecMode.CPU,
                 num_worlds = num_worlds,

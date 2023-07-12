@@ -38,8 +38,8 @@ enum class Action : int32_t {
 };
 
 struct GridPos {
-    int32_t x;
     int32_t y;
+    int32_t x;
 };
 
 struct Reward {
