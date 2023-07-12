@@ -9,7 +9,7 @@ class GridWorld:
         self.size = np.array(walls.shape)
         self.start_cell = start_cell
         self.end_cells = end_cells
-        self.rewards = rewards
+        self.rewards_input = rewards
         self.walls = walls
         if np.any(start_cell < 0) or np.any(start_cell >= self.size):
             raise Exception("Start cell out of bounds")
@@ -39,8 +39,8 @@ class GridWorld:
     def vis_world(self):
         im = np.ones(np.append(self.size, 3))
         im[self.walls > 0] = 0
-        im[self.rewards > 0] = np.array([0,1,0])
-        im[self.rewards < 0] = np.array([1,0,0])
+        im[self.rewards_input > 0] = np.array([0,1,0])
+        im[self.rewards_input < 0] = np.array([1,0,0])
         im[self.start_cell[0], self.start_cell[1]] = np.array([0,0,1])
         plt.imshow(im)
         plt.show()
