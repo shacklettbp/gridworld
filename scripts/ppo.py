@@ -5,6 +5,8 @@ import pickle as pkl
 from gridworld import GridWorld
 from tabular_policy import TabularPolicy, TabularValue
 import torch
+import warnings
+warnings.filterwarnings("error")
 
 class PPOTabularActor(madrona_learn.ActorCritic.DiscreteActor):
     def __init__(self, num_states, num_actions):
@@ -55,7 +57,7 @@ def to1D(obs):
         return obs_1d.view(*obs.shape[:-1], 1)
 
 policy = madrona_learn.ActorCritic(
-    backbone = lambda obs: to1D(obs),
+    backbone = to1D,
     actor = PPOTabularActor(num_states, num_actions),
     critic = PPOTabularCritic(num_states),
 )
@@ -80,9 +82,12 @@ madrona_learn.train(madrona_learn.SimInterface(
             entropy_coef=0.01,
             max_grad_norm=5,
             num_epochs=1,
-            clip_value_loss=True,
+            clip_value_loss=False,
         ),
     ),
     policy,
     dev = dev,
 )
+
+print(policy.actor.tbl.policy)
+print(policy.critic.tbl.V)
