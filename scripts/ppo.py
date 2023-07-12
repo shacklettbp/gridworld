@@ -26,9 +26,9 @@ class PPOTabularCritic(madrona_learn.ActorCritic.Critic):
 arg_parser = argparse.ArgumentParser()
 arg_parser.add_argument('--num-worlds', type=int, required=True)
 arg_parser.add_argument('--num-updates', type=int, required=True)
-arg_parser.add_argument('--lr', type=float, default=3e-4)
-arg_parser.add_argument('--gamma', type=float, default=0.998)
-arg_parser.add_argument('--steps-per-update', type=int, default=100)
+arg_parser.add_argument('--lr', type=float, default=0.1)
+arg_parser.add_argument('--gamma', type=float, default=0.9)
+arg_parser.add_argument('--steps-per-update', type=int, default=50)
 arg_parser.add_argument('--gpu-id', type=int, default=0)
 arg_parser.add_argument('--cpu-sim', action='store_true')
 
@@ -113,14 +113,17 @@ for r in range(num_rows):
 
 world.force_reset[0] = 1
 world.step()
+print("Initial Obs: ", world.observations[0])
+print()
 
 with torch.no_grad():
     for i in range(10):
-        print(world.observations[0])
         trained.actor.infer(to1D(world.observations[0:1]), world.actions[0:1])
-        print(world.actions[0])
-        print()
+        print("Action:", world.actions[0].cpu().numpy())
         world.step()
+        print("Obs:   ",   world.observations[0].cpu().numpy())
+        print("Reward:", world.rewards[0].cpu().numpy())
+        print()
 
 plt.imshow(policy.actor.tbl.policy[:,0].reshape(num_rows, num_cols).cpu().detach().numpy())
 plt.show()
