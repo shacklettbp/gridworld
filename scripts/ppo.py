@@ -31,6 +31,7 @@ arg_parser.add_argument('--gamma', type=float, default=0.9)
 arg_parser.add_argument('--steps-per-update', type=int, default=50)
 arg_parser.add_argument('--gpu-id', type=int, default=0)
 arg_parser.add_argument('--cpu-sim', action='store_true')
+arg_parser.add_argument('--fp16', action='store_true')
 
 args = arg_parser.parse_args()
 
@@ -86,6 +87,7 @@ trained = madrona_learn.train(madrona_learn.SimInterface(
             num_epochs=1,
             clip_value_loss=True,
         ),
+        mixed_precision = args.fp16,
     ),
     policy,
     dev = dev,
