@@ -32,6 +32,7 @@ arg_parser.add_argument('--steps-per-update', type=int, default=50)
 arg_parser.add_argument('--gpu-id', type=int, default=0)
 arg_parser.add_argument('--cpu-sim', action='store_true')
 arg_parser.add_argument('--fp16', action='store_true')
+arg_parser.add_argument('--plot', action='store_true')
 
 args = arg_parser.parse_args()
 
@@ -127,19 +128,20 @@ with torch.no_grad():
         print("Reward:", world.rewards[0].cpu().numpy())
         print()
 
-plt.imshow(policy.actor.tbl.policy[:,0].reshape(num_rows, num_cols).cpu().detach().numpy())
-plt.show()
-plt.imshow(policy.actor.tbl.policy[:,1].reshape(num_rows, num_cols).cpu().detach().numpy())
-plt.show()
-plt.imshow(policy.actor.tbl.policy[:,2].reshape(num_rows, num_cols).cpu().detach().numpy())
-plt.show()
-plt.imshow(policy.actor.tbl.policy[:,3].reshape(num_rows, num_cols).cpu().detach().numpy())
-plt.show()
-print(policy.actor.tbl.policy[:,0])
-print(policy.actor.tbl.policy[:,0].detach().numpy().reshape(num_cols, num_rows).swapaxes(0,1).copy().flatten())
-'''
-plt.imshow(policy.actor.tbl.policy[:,0].detach().numpy().reshape(num_cols, num_rows).swapaxes(0,1).copy().reshape(num_cols, num_rows))
-plt.show()
-plt.imshow(policy.critic.tbl.V.reshape(num_rows, num_cols).cpu().detach().numpy())
-plt.show()
-'''
+if args.plot:
+    plt.imshow(policy.actor.tbl.policy[:,0].reshape(num_rows, num_cols).cpu().detach().numpy())
+    plt.show()
+    plt.imshow(policy.actor.tbl.policy[:,1].reshape(num_rows, num_cols).cpu().detach().numpy())
+    plt.show()
+    plt.imshow(policy.actor.tbl.policy[:,2].reshape(num_rows, num_cols).cpu().detach().numpy())
+    plt.show()
+    plt.imshow(policy.actor.tbl.policy[:,3].reshape(num_rows, num_cols).cpu().detach().numpy())
+    plt.show()
+    print(policy.actor.tbl.policy[:,0])
+    print(policy.actor.tbl.policy[:,0].detach().numpy().reshape(num_cols, num_rows).swapaxes(0,1).copy().flatten())
+    '''
+    plt.imshow(policy.actor.tbl.policy[:,0].detach().numpy().reshape(num_cols, num_rows).swapaxes(0,1).copy().reshape(num_cols, num_rows))
+    plt.show()
+    plt.imshow(policy.critic.tbl.V.reshape(num_rows, num_cols).cpu().detach().numpy())
+    plt.show()
+    '''
