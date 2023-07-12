@@ -22,11 +22,11 @@ grid_world = GridWorld(num_worlds, start_cell, end_cell, rewards, walls)
 print(grid_world.observations.shape)
 print(start_cell, end_cell, walls)
 
-q_dict = torch.full((walls.shape[1], walls.shape[0], 4),-10000.) # Key: [obs, action], Value: [q]
-v_dict = torch.full((walls.shape[1], walls.shape[0]),-10000.) # Key: obs, Value: v
-v_dict[5,4] = 1.
+q_dict = torch.full((walls.shape[0], walls.shape[1], 4),-10000.) # Key: [obs, action], Value: [q]
+v_dict = torch.full((walls.shape[0], walls.shape[1]),-10000.) # Key: obs, Value: v
+v_dict[4,5] = 1.
 # Also set walls to 0
-v_dict[2:,3] = 0.
+v_dict[3,2:] = 0.
 
 # Create queue for DP
 # curr_obs = torch.tensor([[5,4]]).repeat(num_worlds, 1)
@@ -66,8 +66,8 @@ for i in range(num_steps):
         v_dict[curr_states[j][0], curr_states[j][1]] = max(
             v_dict[curr_states[j][0], curr_states[j][1]], curr_rewards[j] + discount * v_dict[next_states[j][0], next_states[j][1]])
     '''
-    next_states[dones == 1,0] = end_cell[0,1]
-    next_states[dones == 1,1] = end_cell[0,0]
+    next_states[dones == 1,0] = end_cell[0,0]
+    next_states[dones == 1,1] = end_cell[0,1]
     q_dict[curr_states[:,0], curr_states[:,1], curr_actions] = torch.max(
         q_dict[curr_states[:,0], curr_states[:,1], curr_actions], curr_rewards + discount * v_dict[next_states[:,0], next_states[:,1]]
     )

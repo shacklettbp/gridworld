@@ -39,7 +39,7 @@ for i in range(num_steps):
 
     # "Policy"
     #grid_world.actions[:, 0] = torch.randint(0, 4, size=(num_worlds,))
-    flattened_obs = curr_obs[:,1]*num_cols + curr_obs[:,0]
+    flattened_obs = curr_obs[:,0]*num_cols + curr_obs[:,1]
     #print(curr_obs[:,0], curr_obs[:,1], flattened_obs)
     acts = policy(flattened_obs)
     #print(acts)
@@ -92,7 +92,6 @@ print(unique_states, unique_states.shape)
 print(states_count, states_count.shape)
 print(states_values, states_values.shape)
 
-'''
 im = torch.zeros((torch.max(unique_states[:,0]) + 1, torch.max(unique_states[:,1]) + 1, torch.max(unique_states[:,2]) + 1))
 for (i, state) in enumerate(unique_states):
     im[state[0], state[1], state[2]] = states_values[i]
@@ -104,4 +103,3 @@ plt.imshow(im[:,:,2])
 plt.show()
 plt.imshow(im[:,:,3])
 plt.show()
-'''
