@@ -7,6 +7,7 @@ from tabular_policy import TabularPolicy, TabularValue
 import torch
 import warnings
 warnings.filterwarnings("error")
+import matplotlib.pyplot as plt
 
 class PPOTabularActor(madrona_learn.ActorCritic.DiscreteActor):
     def __init__(self, num_states, num_actions):
@@ -120,3 +121,18 @@ with torch.no_grad():
         print(world.actions[0])
         print()
         world.step()
+        
+plt.imshow(policy.actor.tbl.policy[:,0].reshape(num_rows, num_cols).cpu().detach().numpy())
+plt.show()
+plt.imshow(policy.actor.tbl.policy[:,1].reshape(num_rows, num_cols).cpu().detach().numpy())
+plt.show()
+plt.imshow(policy.actor.tbl.policy[:,2].reshape(num_rows, num_cols).cpu().detach().numpy())
+plt.show()
+plt.imshow(policy.actor.tbl.policy[:,3].reshape(num_rows, num_cols).cpu().detach().numpy())
+plt.show()
+print(policy.actor.tbl.policy[:,0])
+print(policy.actor.tbl.policy[:,0].detach().numpy().reshape(num_cols, num_rows).swapaxes(0,1).copy().flatten())
+plt.imshow(policy.actor.tbl.policy[:,0].detach().numpy().reshape(num_cols, num_rows).swapaxes(0,1).copy().reshape(num_cols, num_rows))
+plt.show()
+plt.imshow(policy.critic.tbl.V.reshape(num_rows, num_cols).cpu().detach().numpy())
+plt.show()
