@@ -1,4 +1,5 @@
 import argparse
+import sys
 import madrona_learn
 import pathlib
 import pickle as pkl
@@ -33,6 +34,7 @@ arg_parser.add_argument('--gpu-id', type=int, default=0)
 arg_parser.add_argument('--cpu-sim', action='store_true')
 arg_parser.add_argument('--fp16', action='store_true')
 arg_parser.add_argument('--plot', action='store_true')
+arg_parser.add_argument('--dnn', action='store_true')
 
 args = arg_parser.parse_args()
 
@@ -60,11 +62,26 @@ def to1D(obs):
         obs_1d = obs[:, 0] * num_cols + obs[:, 1]
         return obs_1d.view(*obs.shape[:-1], 1)
 
-policy = madrona_learn.ActorCritic(
-    backbone = to1D,
-    actor = PPOTabularActor(num_states, num_actions),
-    critic = PPOTabularCritic(num_states),
-)
+if args.dnn:
+    def process_obs(obs):
+        flat = to1D(obs)
+        return flat.float()
+
+    policy = madrona_learn.ActorCritic(
+        backbone = madrona_learn.models.SmallMLPBackbone(
+            process_obs_fn = process_obs,
+            input_dim = 1,
+            num_channels = 1024,
+        ),
+        actor = madrona_learn.models.LinearLayerDiscreteActor(1024, [num_actions]),
+        critic = madrona_learn.models.LinearLayerCritic(1024),
+    )
+else:
+    policy = madrona_learn.ActorCritic(
+        backbone = to1D,
+        actor = PPOTabularActor(num_states, num_actions),
+        critic = PPOTabularCritic(num_states),
+    )
 
 trained = madrona_learn.train(madrona_learn.SimInterface(
         step = lambda: world.step(),
@@ -94,6 +111,18 @@ trained = madrona_learn.train(madrona_learn.SimInterface(
     dev = dev,
 )
 
+with torch.no_grad():
+    for i in range(10):
+        trained.eval_infer(world.actions[0:1], world.observations[0:1])
+        print("Action:", world.actions[0].cpu().numpy())
+        world.step()
+        print("Obs:   ", world.observations[0].cpu().numpy())
+        print("Reward:", world.rewards[0].cpu().numpy())
+        print()
+
+if args.dnn:
+    sys.exit(0)
+
 print("\nAction probs:")
 for i in range(policy.actor.tbl.policy.shape[0]):
     probs = madrona_learn.DiscreteActionDistributions([num_actions], policy.actor.tbl.policy[i].unsqueeze(0)).dists[0].probs.detach().numpy()[0]
@@ -118,15 +147,6 @@ world.force_reset[0] = 1
 world.step()
 print("Initial Obs: ", world.observations[0])
 print()
-
-with torch.no_grad():
-    for i in range(10):
-        trained.actor.infer(to1D(world.observations[0:1]), world.actions[0:1])
-        print("Action:", world.actions[0].cpu().numpy())
-        world.step()
-        print("Obs:   ",   world.observations[0].cpu().numpy())
-        print("Reward:", world.rewards[0].cpu().numpy())
-        print()
 
 if args.plot:
     plt.imshow(policy.actor.tbl.policy[:,0].reshape(num_rows, num_cols).cpu().detach().numpy())
