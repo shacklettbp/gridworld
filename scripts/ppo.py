@@ -26,8 +26,8 @@ class PPOTabularCritic(madrona_learn.ActorCritic.Critic):
 arg_parser = argparse.ArgumentParser()
 arg_parser.add_argument('--num-worlds', type=int, required=True)
 arg_parser.add_argument('--num-updates', type=int, required=True)
-arg_parser.add_argument('--lr', type=float, default=0.1)
-arg_parser.add_argument('--gamma', type=float, default=0.9)
+arg_parser.add_argument('--lr', type=float, default=0.01)
+arg_parser.add_argument('--gamma', type=float, default=0.998)
 arg_parser.add_argument('--steps-per-update', type=int, default=50)
 arg_parser.add_argument('--gpu-id', type=int, default=0)
 arg_parser.add_argument('--cpu-sim', action='store_true')
@@ -76,14 +76,14 @@ trained = madrona_learn.train(madrona_learn.SimInterface(
     madrona_learn.TrainConfig(
         num_updates = args.num_updates,
         gamma = args.gamma,
-        gae_lambda = 0.95,
+        gae_lambda = 0.998,
         lr = args.lr,
         steps_per_update = args.steps_per_update,
         ppo = madrona_learn.PPOConfig(
             num_mini_batches=1,
             clip_coef=0.2,
             value_loss_coef=1.0,
-            entropy_coef=0.01,
+            entropy_coef=0.3,
             max_grad_norm=5,
             num_epochs=1,
             clip_value_loss=True,
