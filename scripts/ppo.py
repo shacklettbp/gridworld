@@ -30,6 +30,8 @@ arg_parser.add_argument('--lr', type=float, default=0.01)
 arg_parser.add_argument('--gamma', type=float, default=0.998)
 arg_parser.add_argument('--steps-per-update', type=int, default=50)
 arg_parser.add_argument('--gpu-id', type=int, default=0)
+arg_parser.add_argument('--entropy-loss-coef', type=float, default=0.3)
+arg_parser.add_argument('--value-loss-coef', type=float, default=0.5)
 arg_parser.add_argument('--cpu-sim', action='store_true')
 arg_parser.add_argument('--fp16', action='store_true')
 arg_parser.add_argument('--plot', action='store_true')
@@ -64,7 +66,7 @@ def to1D(obs):
 if args.dnn:
     def process_obs(obs):
         flat = to1D(obs)
-        return flat.float()
+        return flat.float() / float(num_rows * num_cols)
 
     policy = madrona_learn.ActorCritic(
         backbone = madrona_learn.models.SmallMLPBackbone(
@@ -98,11 +100,11 @@ trained = madrona_learn.train(madrona_learn.SimInterface(
         ppo = madrona_learn.PPOConfig(
             num_mini_batches=1,
             clip_coef=0.2,
-            value_loss_coef=1.0,
-            entropy_coef=0.3,
-            max_grad_norm=5,
+            value_loss_coef=args.value_loss_coef,
+            entropy_coef=args.entropy_loss_coef,
+            max_grad_norm=0.5,
             num_epochs=1,
-            clip_value_loss=True,
+            clip_value_loss=False,
         ),
         mixed_precision = args.fp16,
     ),
@@ -119,12 +121,16 @@ V = torch.zeros(num_rows, num_cols,
 action_probs = torch.zeros(num_rows, num_cols, num_actions,
                             dtype=torch.float32, device=torch.device('cpu'))
 
+logits = torch.zeros(num_rows, num_cols, num_actions,
+                            dtype=torch.float32, device=torch.device('cpu'))
+
 with torch.no_grad():
     for r in range(num_rows):
         for c in range(num_cols):
             action_dist, value, *rnn = trained(torch.tensor([[r, c]]).cpu())
             V[r, c] = value[0, 0]
             action_probs[r, c, :] = action_dist.probs()[0][0]
+            logits[r, c, :] = action_dist.dists[0].logits[0]
 
     for i in range(10):
         print("Obs:   ", world.observations[0])
@@ -149,6 +155,12 @@ for r in range(num_rows):
     for c in range(num_cols):
         probs = action_probs[r, c]
         print(f"  {r}, {c}: [{probs[0]:.2f} {probs[1]:.2f} {probs[2]:.2f} {probs[3]:.2f}]")
+
+print("\nLogits:")
+for r in range(num_rows):
+    for c in range(num_cols):
+        l = logits[r, c]
+        print(f"  {r}, {c}: [{l[0]:.2f} {l[1]:.2f} {l[2]:.2f} {l[3]:.2f}]")
 
 if args.plot and not args.dnn:
     plt.imshow(policy.actor.tbl.policy[:,0].reshape(num_rows, num_cols).cpu().detach().numpy())
