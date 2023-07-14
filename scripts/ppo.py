@@ -1,5 +1,4 @@
 import argparse
-import sys
 import madrona_learn
 import pathlib
 import pickle as pkl
@@ -14,7 +13,7 @@ class PPOTabularActor(madrona_learn.ActorCritic.DiscreteActor):
     def __init__(self, num_states, num_actions):
         tbl = TabularPolicy(num_states, num_actions, False)
         eval_policy = lambda states: tbl.policy[states.squeeze(-1)]
-        super().__init__(eval_policy, [num_actions])
+        super().__init__([num_actions], eval_policy)
         self.tbl = tbl
 
 class PPOTabularCritic(madrona_learn.ActorCritic.Critic):
@@ -73,7 +72,7 @@ if args.dnn:
             input_dim = 1,
             num_channels = 1024,
         ),
-        actor = madrona_learn.models.LinearLayerDiscreteActor(1024, [num_actions]),
+        actor = madrona_learn.models.LinearLayerDiscreteActor([num_actions], 1024),
         critic = madrona_learn.models.LinearLayerCritic(1024),
     )
 else:
@@ -111,44 +110,47 @@ trained = madrona_learn.train(madrona_learn.SimInterface(
     dev = dev,
 )
 
+world.force_reset[0] = 1
+world.step()
+print()
+
+V = torch.zeros(num_rows, num_cols,
+                dtype=torch.float32, device=torch.device('cpu'))
+action_probs = torch.zeros(num_rows, num_cols, num_actions,
+                            dtype=torch.float32, device=torch.device('cpu'))
+
 with torch.no_grad():
+    for r in range(num_rows):
+        for c in range(num_cols):
+            action_dist, value, *rnn = trained(torch.tensor([[r, c]]).cpu())
+            V[r, c] = value[0, 0]
+            action_probs[r, c, :] = action_dist.probs()[0][0]
+
     for i in range(10):
+        print("Obs:   ", world.observations[0])
         trained.eval_infer(world.actions[0:1], world.observations[0:1])
         print("Action:", world.actions[0].cpu().numpy())
         world.step()
-        print("Obs:   ", world.observations[0].cpu().numpy())
         print("Reward:", world.rewards[0].cpu().numpy())
         print()
-
-if args.dnn:
-    sys.exit(0)
-
-print("\nAction probs:")
-for i in range(policy.actor.tbl.policy.shape[0]):
-    probs = madrona_learn.DiscreteActionDistributions([num_actions], policy.actor.tbl.policy[i].unsqueeze(0)).dists[0].probs.detach().numpy()[0]
-
-    row = i // num_cols
-    col = i % num_cols
-
-    print(f"  {row}, {col}: [{probs[0]:.2f} {probs[1]:.2f} {probs[2]:.2f} {probs[3]:.2f}]")
 
 print(f"Grid size: {num_rows} x {num_cols}")
 print(rewards)
 print(walls)
 print("\nV:")
 
-V = policy.critic.tbl.V.view(num_rows, num_cols)
 for r in range(num_rows):
     for c in range(num_cols):
         print(f"{V[r, c]: .2f} ", end='')
     print()
 
-world.force_reset[0] = 1
-world.step()
-print("Initial Obs: ", world.observations[0])
-print()
+print("\nAction probs:")
+for r in range(num_rows):
+    for c in range(num_cols):
+        probs = action_probs[r, c]
+        print(f"  {r}, {c}: [{probs[0]:.2f} {probs[1]:.2f} {probs[2]:.2f} {probs[3]:.2f}]")
 
-if args.plot:
+if args.plot and not args.dnn:
     plt.imshow(policy.actor.tbl.policy[:,0].reshape(num_rows, num_cols).cpu().detach().numpy())
     plt.show()
     plt.imshow(policy.actor.tbl.policy[:,1].reshape(num_rows, num_cols).cpu().detach().numpy())
