@@ -65,13 +65,14 @@ def to1D(obs):
 
 if args.dnn:
     def process_obs(obs):
-        flat = to1D(obs)
-        return flat.float() / float(num_rows * num_cols)
+        div = torch.tensor([[1 / float(num_rows), 1 / float(num_cols)]],
+            dtype=torch.float32, device=obs.device)
+        return obs.float() * div
 
     policy = madrona_learn.ActorCritic(
         backbone = madrona_learn.models.SmallMLPBackbone(
             process_obs_fn = process_obs,
-            input_dim = 1,
+            input_dim = 2,
             num_channels = 1024,
         ),
         actor = madrona_learn.models.LinearLayerDiscreteActor([num_actions], 1024),
@@ -94,7 +95,7 @@ trained = madrona_learn.train(madrona_learn.SimInterface(
     madrona_learn.TrainConfig(
         num_updates = args.num_updates,
         gamma = args.gamma,
-        gae_lambda = 0.998,
+        gae_lambda = 0.95,
         lr = args.lr,
         steps_per_update = args.steps_per_update,
         ppo = madrona_learn.PPOConfig(
