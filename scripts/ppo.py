@@ -36,6 +36,8 @@ arg_parser.add_argument('--cpu-sim', action='store_true')
 arg_parser.add_argument('--fp16', action='store_true')
 arg_parser.add_argument('--plot', action='store_true')
 arg_parser.add_argument('--dnn', action='store_true')
+# Args for DNN:
+# --num-worlds 1024 --num-updates 1000 --dnn --lr 0.001 --entropy-loss-coef 0.05
 
 args = arg_parser.parse_args()
 
