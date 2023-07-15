@@ -1,11 +1,14 @@
 from madrona_learn import (
         train, TrainConfig, PPOConfig, SimInterface,
         ActorCritic, DiscreteActor, Critic, 
-        BackboneShared, BackboneSeparate, BackboneEncoder,
+        BackboneShared, BackboneSeparate,
+        BackboneEncoder, RecurrentBackboneEncoder,
     )
 from madrona_learn.models import (
         MLP, LinearLayerDiscreteActor, LinearLayerCritic,
     )
+
+from madrona_learn.rnn import LSTM
 
 import argparse
 import pathlib
@@ -44,11 +47,16 @@ arg_parser.add_argument('--cpu-sim', action='store_true')
 arg_parser.add_argument('--fp16', action='store_true')
 arg_parser.add_argument('--plot', action='store_true')
 arg_parser.add_argument('--dnn', action='store_true')
+arg_parser.add_argument('--num-channels', type=int, default=1024)
 arg_parser.add_argument('--separate-value', action='store_true')
-arg_parser.add_argument('--rnn', action='store_true')
-# Args for DNN:
+arg_parser.add_argument('--actor-rnn', action='store_true')
+arg_parser.add_argument('--critic-rnn', action='store_true')
+# Working DNN hyperparams:
 # --num-worlds 1024 --num-updates 1000 --dnn --lr 0.001 --entropy-loss-coef 0.1
 # --num-worlds 1024 --num-updates 1000 --dnn --lr 0.001 --entropy-loss-coef 0.3 --separate-value
+# Alternatives (fast):
+# --num-worlds 1024 --num-updates 1000 --dnn --lr 0.001 --entropy-loss-coef 0.3 --steps-per-update 10 --separate-value --num-channels 64 --gamma 0.9 
+# --num-worlds 1024 --num-updates 1000 --dnn --lr 0.001 --entropy-loss-coef 0.3 --steps-per-update 10 --separate-value --num-channels 256 --gamma 0.998
 
 args = arg_parser.parse_args()
 
@@ -82,36 +90,47 @@ if args.dnn:
             dtype=torch.float32, device=obs.device)
         return obs.float() * div
 
+    def make_rnn_encoder(num_channels):
+        return RecurrentBackboneEncoder(
+            net = MLP(
+                input_dim = 2,
+                num_channels = num_channels,
+                num_layers = 2,
+            ),
+            rnn = LSTM(
+                in_channels = num_channels,
+                num_hidden = num_channels,
+                num_layers = 1,
+            )
+        )
+
+    def make_normal_encoder(num_channels):
+        return BackboneEncoder(MLP(
+            input_dim = 2,
+            num_channels = num_channels,
+            num_layers = 2,
+        ))
+
     if args.separate_value:
         # Use different channel dims just to make sure everything is being passed correctly
         backbone = BackboneSeparate(
             process_obs = process_obs,
-            actor_encoder = BackboneEncoder(MLP(
-                input_dim = 2,
-                num_channels = 1024,
-                num_layers = 2,
-            )),
-            critic_encoder = BackboneEncoder(MLP(
-                input_dim = 2,
-                num_channels = 512,
-                num_layers = 2,
-            )),
+            actor_encoder = make_rnn_encoder(args.num_channels) if args.actor_rnn else make_normal_encoder(args.num_channels),
+            critic_encoder = make_rnn_encoder(args.num_channels // 2) if args.critic_rnn else make_normal_encoder(args.num_channels // 2),
         )
 
-        actor_input = 1024
-        critic_input = 512 
+        actor_input = args.num_channels 
+        critic_input = args.num_channels // 2
     else:
+        assert(args.actor_rnn == args.critic_rnn)
+
         backbone = BackboneShared(
             process_obs = process_obs,
-            encoder = BackboneEncoder(MLP(
-                input_dim = 2,
-                num_channels = 1024,
-                num_layers = 2,
-            )),
+            encoder = make_rnn_encoder(args.num_channels) if args.actor_rnn else make_normal_encoder(args.num_channels),
         )
 
-        actor_input = 1024
-        critic_input = 1024
+        actor_input = args.num_channels
+        critic_input = args.num_channels
 
     policy = ActorCritic(
         backbone = backbone,
@@ -148,7 +167,7 @@ trained = train(
             value_loss_coef=args.value_loss_coef,
             entropy_coef=args.entropy_loss_coef,
             max_grad_norm=0.5,
-            num_epochs=1,
+            num_epochs=4,
             clip_value_loss=False,
         ),
         mixed_precision = args.fp16,
@@ -173,15 +192,19 @@ cur_rnn_states = []
 
 for shape in trained.recurrent_cfg.shapes:
     cur_rnn_states.append(torch.zeros(
-        *shape, dtype=torch.float32, device=torch.device('cpu')))
+        *shape[0:2], 1, shape[2], dtype=torch.float32, device=torch.device('cpu')))
 
 with torch.no_grad():
+    # Note these collected values are pretty much meaningless with a recurrent policy
     for r in range(num_rows):
         for c in range(num_cols):
             action_dist, value, cur_rnn_states = trained(cur_rnn_states, torch.tensor([[r, c]]).cpu())
             V[r, c] = value[0, 0]
             action_probs[r, c, :] = action_dist.probs()[0][0]
             logits[r, c, :] = action_dist.dists[0].logits[0]
+
+    for state in cur_rnn_states:
+        state.zero_()
 
     for i in range(10):
         print("Obs:   ", world.observations[0])
