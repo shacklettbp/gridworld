@@ -48,6 +48,7 @@ arg_parser.add_argument('--separate-value', action='store_true')
 arg_parser.add_argument('--rnn', action='store_true')
 # Args for DNN:
 # --num-worlds 1024 --num-updates 1000 --dnn --lr 0.001 --entropy-loss-coef 0.1
+# --num-worlds 1024 --num-updates 1000 --dnn --lr 0.001 --entropy-loss-coef 0.3 --separate-value
 
 args = arg_parser.parse_args()
 
@@ -171,11 +172,8 @@ logits = torch.zeros(num_rows, num_cols, num_actions,
 cur_rnn_states = []
 
 for shape in trained.recurrent_cfg.shapes:
-    if shape is None:
-        cur_rnn_states.append(None)
-    else:
-        cur_rnn_states.append(torch.zeros(
-            *shape, dtype=torch.float32, device=torch.device('cpu')))
+    cur_rnn_states.append(torch.zeros(
+        *shape, dtype=torch.float32, device=torch.device('cpu')))
 
 with torch.no_grad():
     for r in range(num_rows):
