@@ -8,7 +8,7 @@ from madrona_learn.models import (
         MLP, LinearLayerDiscreteActor, LinearLayerCritic,
     )
 
-from madrona_learn.rnn import LSTM
+from madrona_learn.rnn import LSTM, FastLSTM
 
 import argparse
 import pathlib
@@ -94,12 +94,12 @@ if args.dnn:
         return RecurrentBackboneEncoder(
             net = MLP(
                 input_dim = 2,
-                num_channels = num_channels,
+                num_channels = num_channels // 2,
                 num_layers = 2,
             ),
-            rnn = LSTM(
-                in_channels = num_channels,
-                num_hidden = num_channels,
+            rnn = FastLSTM(
+                in_channels = num_channels // 2,
+                hidden_channels = num_channels,
                 num_layers = 1,
             )
         )
