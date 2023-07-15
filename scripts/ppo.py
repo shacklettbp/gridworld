@@ -1,7 +1,7 @@
 from madrona_learn import (
         train, TrainConfig, PPOConfig, SimInterface,
         ActorCritic, DiscreteActor, Critic, 
-        BackboneShared, BackboneEncoder,
+        BackboneShared, BackboneSeparate, BackboneEncoder,
     )
 from madrona_learn.models import (
         MLP, LinearLayerDiscreteActor, LinearLayerCritic,
@@ -44,6 +44,8 @@ arg_parser.add_argument('--cpu-sim', action='store_true')
 arg_parser.add_argument('--fp16', action='store_true')
 arg_parser.add_argument('--plot', action='store_true')
 arg_parser.add_argument('--dnn', action='store_true')
+arg_parser.add_argument('--separate-value', action='store_true')
+arg_parser.add_argument('--rnn', action='store_true')
 # Args for DNN:
 # --num-worlds 1024 --num-updates 1000 --dnn --lr 0.001 --entropy-loss-coef 0.1
 
@@ -79,7 +81,25 @@ if args.dnn:
             dtype=torch.float32, device=obs.device)
         return obs.float() * div
 
-    policy = ActorCritic(
+    if args.separate_value:
+        # Use different channel dims just to make sure everything is being passed correctly
+        backbone = BackboneSeparate(
+            process_obs = process_obs,
+            actor_encoder = BackboneEncoder(MLP(
+                input_dim = 2,
+                num_channels = 1024,
+                num_layers = 2,
+            )),
+            critic_encoder = BackboneEncoder(MLP(
+                input_dim = 2,
+                num_channels = 512,
+                num_layers = 2,
+            )),
+        )
+
+        actor_input = 1024
+        critic_input = 512 
+    else:
         backbone = BackboneShared(
             process_obs = process_obs,
             encoder = BackboneEncoder(MLP(
@@ -87,9 +107,15 @@ if args.dnn:
                 num_channels = 1024,
                 num_layers = 2,
             )),
-        ),
-        actor = LinearLayerDiscreteActor([num_actions], 1024),
-        critic = LinearLayerCritic(1024),
+        )
+
+        actor_input = 1024
+        critic_input = 1024
+
+    policy = ActorCritic(
+        backbone = backbone,
+        actor = LinearLayerDiscreteActor([num_actions], actor_input),
+        critic = LinearLayerCritic(critic_input),
     )
 else:
     policy = ActorCritic(
@@ -142,17 +168,26 @@ action_probs = torch.zeros(num_rows, num_cols, num_actions,
 logits = torch.zeros(num_rows, num_cols, num_actions,
                             dtype=torch.float32, device=torch.device('cpu'))
 
+cur_rnn_states = []
+
+for shape in trained.recurrent_cfg.shapes:
+    if shape is None:
+        cur_rnn_states.append(None)
+    else:
+        cur_rnn_states.append(torch.zeros(
+            *shape, dtype=torch.float32, device=torch.device('cpu')))
+
 with torch.no_grad():
     for r in range(num_rows):
         for c in range(num_cols):
-            action_dist, value, *rnn = trained((), torch.tensor([[r, c]]).cpu())
+            action_dist, value, cur_rnn_states = trained(cur_rnn_states, torch.tensor([[r, c]]).cpu())
             V[r, c] = value[0, 0]
             action_probs[r, c, :] = action_dist.probs()[0][0]
             logits[r, c, :] = action_dist.dists[0].logits[0]
 
     for i in range(10):
         print("Obs:   ", world.observations[0])
-        trained.actor_infer(world.actions[0:1], (), (), world.observations[0:1])
+        trained.actor_infer(world.actions[0:1], cur_rnn_states, cur_rnn_states, world.observations[0:1])
         print("Action:", world.actions[0].cpu().numpy())
         world.step()
         print("Reward:", world.rewards[0].cpu().numpy())
