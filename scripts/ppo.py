@@ -1,5 +1,13 @@
+from madrona_learn import (
+        train, TrainConfig, PPOConfig, SimInterface,
+        ActorCritic, DiscreteActor, Critic, 
+        BackboneShared, BackboneEncoder,
+    )
+from madrona_learn.models import (
+        MLP, LinearLayerDiscreteActor, LinearLayerCritic,
+    )
+
 import argparse
-import madrona_learn
 import pathlib
 import pickle as pkl
 from gridworld import GridWorld
@@ -9,14 +17,14 @@ import warnings
 warnings.filterwarnings("error")
 import matplotlib.pyplot as plt
 
-class PPOTabularActor(madrona_learn.ActorCritic.DiscreteActor):
+class PPOTabularActor(DiscreteActor):
     def __init__(self, num_states, num_actions):
         tbl = TabularPolicy(num_states, num_actions, False)
         eval_policy = lambda states: tbl.policy[states.squeeze(-1)]
         super().__init__([num_actions], eval_policy)
         self.tbl = tbl
 
-class PPOTabularCritic(madrona_learn.ActorCritic.Critic):
+class PPOTabularCritic(Critic):
     def __init__(self, num_states):
         tbl = TabularValue(num_states)
         eval_V = lambda states: tbl.V[states]
@@ -71,36 +79,43 @@ if args.dnn:
             dtype=torch.float32, device=obs.device)
         return obs.float() * div
 
-    policy = madrona_learn.ActorCritic(
-        backbone = madrona_learn.models.SmallMLPBackbone(
-            process_obs_fn = process_obs,
-            input_dim = 2,
-            num_channels = 1024,
+    policy = ActorCritic(
+        backbone = BackboneShared(
+            process_obs = process_obs,
+            encoder = BackboneEncoder(MLP(
+                input_dim = 2,
+                num_channels = 1024,
+                num_layers = 2,
+            )),
         ),
-        actor = madrona_learn.models.LinearLayerDiscreteActor([num_actions], 1024),
-        critic = madrona_learn.models.LinearLayerCritic(1024),
+        actor = LinearLayerDiscreteActor([num_actions], 1024),
+        critic = LinearLayerCritic(1024),
     )
 else:
-    policy = madrona_learn.ActorCritic(
-        backbone = to1D,
+    policy = ActorCritic(
+        backbone = BackboneShared(
+            process_obs = to1D,
+            encoder = BackboneEncoder(lambda x: x),
+        ),
         actor = PPOTabularActor(num_states, num_actions),
         critic = PPOTabularCritic(num_states),
     )
 
-trained = madrona_learn.train(madrona_learn.SimInterface(
+trained = train(
+    SimInterface(
         step = lambda: world.step(),
         obs = [world.observations],
         actions = world.actions,
         dones = world.dones,
         rewards = world.rewards,
     ),
-    madrona_learn.TrainConfig(
+    TrainConfig(
         num_updates = args.num_updates,
         gamma = args.gamma,
         gae_lambda = 0.95,
         lr = args.lr,
         steps_per_update = args.steps_per_update,
-        ppo = madrona_learn.PPOConfig(
+        ppo = PPOConfig(
             num_mini_batches=1,
             clip_coef=0.2,
             value_loss_coef=args.value_loss_coef,
@@ -130,14 +145,14 @@ logits = torch.zeros(num_rows, num_cols, num_actions,
 with torch.no_grad():
     for r in range(num_rows):
         for c in range(num_cols):
-            action_dist, value, *rnn = trained(torch.tensor([[r, c]]).cpu())
+            action_dist, value, *rnn = trained((), torch.tensor([[r, c]]).cpu())
             V[r, c] = value[0, 0]
             action_probs[r, c, :] = action_dist.probs()[0][0]
             logits[r, c, :] = action_dist.dists[0].logits[0]
 
     for i in range(10):
         print("Obs:   ", world.observations[0])
-        trained.eval_infer(world.actions[0:1], world.observations[0:1])
+        trained.actor_infer(world.actions[0:1], (), (), world.observations[0:1])
         print("Action:", world.actions[0].cpu().numpy())
         world.step()
         print("Reward:", world.rewards[0].cpu().numpy())
