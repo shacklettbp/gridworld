@@ -39,7 +39,7 @@ def single_test():
 single_test()
 
 print("\n\nSEQUENCE TEST\n")
-sequence_breaks = torch.tensor([0, 0, 0, 1, 0, 1, 0, 0], dtype=torch.bool)
+sequence_breaks = torch.tensor([1, 0, 0, 1, 0, 1, 0, 0], dtype=torch.bool)
 print("seq breaks: ", sequence_breaks.to(dtype=torch.uint8))
 sequence_breaks = sequence_breaks.view(seq_len, 1, 1).expand(seq_len, batch_size, 1).contiguous()
 print(sequence_breaks.shape)
@@ -50,3 +50,4 @@ print(fast_outputs)
 slow_outputs = slow_lstm.fwd_sequence(inputs, hidden_start, sequence_breaks)
 print(slow_outputs)
 
+madrona_learn.rnn.FastLSTM.test()
