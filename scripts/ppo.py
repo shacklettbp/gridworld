@@ -51,6 +51,7 @@ arg_parser.add_argument('--num-channels', type=int, default=1024)
 arg_parser.add_argument('--separate-value', action='store_true')
 arg_parser.add_argument('--actor-rnn', action='store_true')
 arg_parser.add_argument('--critic-rnn', action='store_true')
+arg_parser.add_argument('--num-bptt-chunks', type=int, default=1)
 # Working DNN hyperparams:
 # --num-worlds 1024 --num-updates 1000 --dnn --lr 0.001 --entropy-loss-coef 0.1
 # --num-worlds 1024 --num-updates 1000 --dnn --lr 0.001 --entropy-loss-coef 0.3 --separate-value
@@ -161,6 +162,7 @@ trained = train(
         gae_lambda = 0.95,
         lr = args.lr,
         steps_per_update = args.steps_per_update,
+        num_bptt_chunks = args.num_bptt_chunks,
         ppo = PPOConfig(
             num_mini_batches=1,
             clip_coef=0.2,
