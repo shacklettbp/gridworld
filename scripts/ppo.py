@@ -91,10 +91,9 @@ def update_cb(update_idx, update_time, update_results):
 
     ppo = update_results.ppo_stats
 
-    print(f"Update: {update_idx}")
+    print(f"\nUpdate: {update_idx}")
     print(f"    Loss: {ppo.loss: .3e}, A: {ppo.action_loss: .3e}, V: {ppo.value_loss: .3e}, E: {ppo.entropy_loss: .3e}")
     profile.report()
-    print()
 
 if args.dnn:
     def process_obs(obs):
