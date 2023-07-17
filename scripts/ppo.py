@@ -85,6 +85,9 @@ def to1D(obs):
         obs_1d = obs[:, 0] * num_cols + obs[:, 1]
         return obs_1d.view(*obs.shape[:-1], 1)
 
+def update_cb():
+    pass
+
 if args.dnn:
     def process_obs(obs):
         div = torch.tensor([[1 / float(num_rows), 1 / float(num_cols)]],
@@ -149,6 +152,7 @@ else:
     )
 
 trained = train(
+    dev,
     SimInterface(
         step = lambda: world.step(),
         obs = [world.observations],
@@ -175,7 +179,7 @@ trained = train(
         mixed_precision = args.fp16,
     ),
     policy,
-    dev = dev,
+    update_cb,
 )
 
 world.force_reset[0] = 1
