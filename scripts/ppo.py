@@ -94,7 +94,7 @@ def update_cb(update_idx, update_time, update_results):
 
     print(f"\nUpdate: {update_idx}")
     print(f"    Loss: {ppo.loss: .3e}, A: {ppo.action_loss: .3e}, V: {ppo.value_loss: .3e}, E: {ppo.entropy_loss: .3e}")
-    if args.profile_report():
+    if args.profile_report:
         profile.report()
 
 if args.dnn:
