@@ -52,6 +52,7 @@ arg_parser.add_argument('--separate-value', action='store_true')
 arg_parser.add_argument('--actor-rnn', action='store_true')
 arg_parser.add_argument('--critic-rnn', action='store_true')
 arg_parser.add_argument('--num-bptt-chunks', type=int, default=1)
+arg_parser.add_argument('--profile-report', action='store_true')
 # Working DNN hyperparams:
 # --num-worlds 1024 --num-updates 1000 --dnn --lr 0.001 --entropy-loss-coef 0.1
 # --num-worlds 1024 --num-updates 1000 --dnn --lr 0.001 --entropy-loss-coef 0.3 --separate-value
@@ -93,7 +94,8 @@ def update_cb(update_idx, update_time, update_results):
 
     print(f"\nUpdate: {update_idx}")
     print(f"    Loss: {ppo.loss: .3e}, A: {ppo.action_loss: .3e}, V: {ppo.value_loss: .3e}, E: {ppo.entropy_loss: .3e}")
-    profile.report()
+    if args.profile_report():
+        profile.report()
 
 if args.dnn:
     def process_obs(obs):
