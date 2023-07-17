@@ -1,5 +1,5 @@
 from madrona_learn import (
-        train, TrainConfig, PPOConfig, SimInterface,
+        train, profile, TrainConfig, PPOConfig, SimInterface,
         ActorCritic, DiscreteActor, Critic, 
         BackboneShared, BackboneSeparate,
         BackboneEncoder, RecurrentBackboneEncoder,
@@ -85,8 +85,16 @@ def to1D(obs):
         obs_1d = obs[:, 0] * num_cols + obs[:, 1]
         return obs_1d.view(*obs.shape[:-1], 1)
 
-def update_cb():
-    pass
+def update_cb(update_idx, update_time, update_results):
+    if update_idx % 10 != 0:
+        return
+
+    ppo = update_results.ppo_stats
+
+    print(f"Update: {update_idx}")
+    print(f"    Loss: {ppo.loss: .3e}, A: {ppo.action_loss: .3e}, V: {ppo.value_loss: .3e}, E: {ppo.entropy_loss: .3e}")
+    profile.report()
+    print()
 
 if args.dnn:
     def process_obs(obs):
