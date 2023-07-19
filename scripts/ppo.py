@@ -27,12 +27,60 @@ class PPOTabularActor(DiscreteActor):
         super().__init__([num_actions], eval_policy)
         self.tbl = tbl
 
+
 class PPOTabularCritic(Critic):
     def __init__(self, num_states):
         tbl = TabularValue(num_states)
         eval_V = lambda states: tbl.V[states]
         super().__init__(eval_V)
         self.tbl = tbl
+
+
+class LearningCallback:
+    def __init__(self, profile_report):
+        self.mean_fps = 0
+        self.profile_report = profile_report
+
+    def __call__(self, update_idx, update_time, update_results, learning_state):
+        update_id = update_idx + 1
+        fps = args.num_worlds * args.steps_per_update / update_time
+        self.mean_fps += (fps - self.mean_fps) / update_id
+
+        if update_id != 1 and  update_id % 10 != 0:
+            return
+
+        ppo = update_results.ppo_stats
+
+        with torch.no_grad():
+            reward_mean = update_results.rewards.mean().cpu().item()
+            reward_min = update_results.rewards.min().cpu().item()
+            reward_max = update_results.rewards.max().cpu().item()
+
+            value_mean = update_results.values.mean().cpu().item()
+            value_min = update_results.values.min().cpu().item()
+            value_max = update_results.values.max().cpu().item()
+
+            advantage_mean = update_results.advantages.mean().cpu().item()
+            advantage_min = update_results.advantages.min().cpu().item()
+            advantage_max = update_results.advantages.max().cpu().item()
+
+            bootstrap_value_mean = update_results.bootstrap_values.mean().cpu().item()
+            bootstrap_value_min = update_results.bootstrap_values.min().cpu().item()
+            bootstrap_value_max = update_results.bootstrap_values.max().cpu().item()
+
+        print(f"\nUpdate: {update_id}")
+        print(f"    Loss: {ppo.loss: .3e}, A: {ppo.action_loss: .3e}, V: {ppo.value_loss: .3e}, E: {ppo.entropy_loss: .3e}")
+        print()
+        print(f"    Rewards          => Avg: {reward_mean: .3e}, Min: {reward_min: .3e}, Max: {reward_max: .3e}")
+        print(f"    Values           => Avg: {value_mean: .3e}, Min: {value_min: .3e}, Max: {value_max: .3e}")
+        print(f"    Advantages       => Avg: {advantage_mean: .3e}, Min: {advantage_min: .3e}, Max: {advantage_max: .3e}")
+        print(f"    Bootstrap Values => Avg: {bootstrap_value_mean: .3e}, Min: {bootstrap_value_min: .3e}, Max: {bootstrap_value_max: .3e}")
+
+        if self.profile_report:
+            print()
+            print(f"    FPS: {fps:.0f}, Update Time: {update_time:.2f}, Avg FPS: {self.mean_fps:.0f}")
+            profile.report()
+
 
 arg_parser = argparse.ArgumentParser()
 arg_parser.add_argument('--num-worlds', type=int, required=True)
@@ -86,16 +134,7 @@ def to1D(obs):
         obs_1d = obs[:, 0] * num_cols + obs[:, 1]
         return obs_1d.view(*obs.shape[:-1], 1)
 
-def update_cb(update_idx, update_time, update_results):
-    if update_idx % 10 != 0:
-        return
-
-    ppo = update_results.ppo_stats
-
-    print(f"\nUpdate: {update_idx}")
-    print(f"    Loss: {ppo.loss: .3e}, A: {ppo.action_loss: .3e}, V: {ppo.value_loss: .3e}, E: {ppo.entropy_loss: .3e}")
-    if args.profile_report:
-        profile.report()
+update_cb = LearningCallback(args.profile_report)
 
 if args.dnn:
     def process_obs(obs):
@@ -223,7 +262,7 @@ with torch.no_grad():
 
     for i in range(10):
         print("Obs:   ", world.observations[0])
-        trained.actor_infer(world.actions[0:1], cur_rnn_states, cur_rnn_states, world.observations[0:1])
+        trained.fwd_actor(world.actions[0:1], cur_rnn_states, cur_rnn_states, world.observations[0:1])
         print("Action:", world.actions[0].cpu().numpy())
         world.step()
         print("Reward:", world.rewards[0].cpu().numpy())
