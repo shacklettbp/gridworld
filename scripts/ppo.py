@@ -35,6 +35,33 @@ class PPOTabularCritic(Critic):
         super().__init__(eval_V)
         self.tbl = tbl
 
+arg_parser = argparse.ArgumentParser()
+arg_parser.add_argument('--num-worlds', type=int, required=True)
+arg_parser.add_argument('--num-updates', type=int, required=True)
+arg_parser.add_argument('--lr', type=float, default=0.01)
+arg_parser.add_argument('--gamma', type=float, default=0.998)
+arg_parser.add_argument('--steps-per-update', type=int, default=50)
+arg_parser.add_argument('--gpu-id', type=int, default=0)
+arg_parser.add_argument('--entropy-loss-coef', type=float, default=0.3)
+arg_parser.add_argument('--value-loss-coef', type=float, default=0.5)
+arg_parser.add_argument('--cpu-sim', action='store_true')
+arg_parser.add_argument('--fp16', action='store_true')
+arg_parser.add_argument('--plot', action='store_true')
+arg_parser.add_argument('--dnn', action='store_true')
+arg_parser.add_argument('--num-channels', type=int, default=1024)
+arg_parser.add_argument('--separate-value', action='store_true')
+arg_parser.add_argument('--actor-rnn', action='store_true')
+arg_parser.add_argument('--critic-rnn', action='store_true')
+arg_parser.add_argument('--num-bptt-chunks', type=int, default=1)
+arg_parser.add_argument('--profile-report', action='store_true')
+# Working DNN hyperparams:
+# --num-worlds 1024 --num-updates 1000 --dnn --lr 0.001 --entropy-loss-coef 0.1
+# --num-worlds 1024 --num-updates 1000 --dnn --lr 0.001 --entropy-loss-coef 0.3 --separate-value
+# Alternatives (fast):
+# --num-worlds 1024 --num-updates 1000 --dnn --lr 0.001 --entropy-loss-coef 0.3 --steps-per-update 10 --separate-value --num-channels 64 --gamma 0.9 
+# --num-worlds 1024 --num-updates 1000 --dnn --lr 0.001 --entropy-loss-coef 0.3 --steps-per-update 10 --separate-value --num-channels 256 --gamma 0.998
+
+args = arg_parser.parse_args()
 
 class LearningCallback:
     def __init__(self, profile_report):
@@ -64,9 +91,10 @@ class LearningCallback:
             advantage_min = update_results.advantages.min().cpu().item()
             advantage_max = update_results.advantages.max().cpu().item()
 
-            bootstrap_value_mean = update_results.bootstrap_values.mean().cpu().item()
-            bootstrap_value_min = update_results.bootstrap_values.min().cpu().item()
-            bootstrap_value_max = update_results.bootstrap_values.max().cpu().item()
+            if args.dnn:
+                bootstrap_value_mean = update_results.bootstrap_values.mean().cpu().item()
+                bootstrap_value_min = update_results.bootstrap_values.min().cpu().item()
+                bootstrap_value_max = update_results.bootstrap_values.max().cpu().item()
 
         print(f"\nUpdate: {update_id}")
         print(f"    Loss: {ppo.loss: .3e}, A: {ppo.action_loss: .3e}, V: {ppo.value_loss: .3e}, E: {ppo.entropy_loss: .3e}")
@@ -74,41 +102,13 @@ class LearningCallback:
         print(f"    Rewards          => Avg: {reward_mean: .3e}, Min: {reward_min: .3e}, Max: {reward_max: .3e}")
         print(f"    Values           => Avg: {value_mean: .3e}, Min: {value_min: .3e}, Max: {value_max: .3e}")
         print(f"    Advantages       => Avg: {advantage_mean: .3e}, Min: {advantage_min: .3e}, Max: {advantage_max: .3e}")
-        print(f"    Bootstrap Values => Avg: {bootstrap_value_mean: .3e}, Min: {bootstrap_value_min: .3e}, Max: {bootstrap_value_max: .3e}")
+        if args.dnn:
+            print(f"    Bootstrap Values => Avg: {bootstrap_value_mean: .3e}, Min: {bootstrap_value_min: .3e}, Max: {bootstrap_value_max: .3e}")
 
         if self.profile_report:
             print()
             print(f"    FPS: {fps:.0f}, Update Time: {update_time:.2f}, Avg FPS: {self.mean_fps:.0f}")
             profile.report()
-
-
-arg_parser = argparse.ArgumentParser()
-arg_parser.add_argument('--num-worlds', type=int, required=True)
-arg_parser.add_argument('--num-updates', type=int, required=True)
-arg_parser.add_argument('--lr', type=float, default=0.01)
-arg_parser.add_argument('--gamma', type=float, default=0.998)
-arg_parser.add_argument('--steps-per-update', type=int, default=50)
-arg_parser.add_argument('--gpu-id', type=int, default=0)
-arg_parser.add_argument('--entropy-loss-coef', type=float, default=0.3)
-arg_parser.add_argument('--value-loss-coef', type=float, default=0.5)
-arg_parser.add_argument('--cpu-sim', action='store_true')
-arg_parser.add_argument('--fp16', action='store_true')
-arg_parser.add_argument('--plot', action='store_true')
-arg_parser.add_argument('--dnn', action='store_true')
-arg_parser.add_argument('--num-channels', type=int, default=1024)
-arg_parser.add_argument('--separate-value', action='store_true')
-arg_parser.add_argument('--actor-rnn', action='store_true')
-arg_parser.add_argument('--critic-rnn', action='store_true')
-arg_parser.add_argument('--num-bptt-chunks', type=int, default=1)
-arg_parser.add_argument('--profile-report', action='store_true')
-# Working DNN hyperparams:
-# --num-worlds 1024 --num-updates 1000 --dnn --lr 0.001 --entropy-loss-coef 0.1
-# --num-worlds 1024 --num-updates 1000 --dnn --lr 0.001 --entropy-loss-coef 0.3 --separate-value
-# Alternatives (fast):
-# --num-worlds 1024 --num-updates 1000 --dnn --lr 0.001 --entropy-loss-coef 0.3 --steps-per-update 10 --separate-value --num-channels 64 --gamma 0.9 
-# --num-worlds 1024 --num-updates 1000 --dnn --lr 0.001 --entropy-loss-coef 0.3 --steps-per-update 10 --separate-value --num-channels 256 --gamma 0.998
-
-args = arg_parser.parse_args()
 
 with open(pathlib.Path(__file__).parent / "world_configs/test_world.pkl", 'rb') as handle:
     start_cell, end_cell, rewards, walls = pkl.load(handle)
