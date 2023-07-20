@@ -41,15 +41,15 @@ class TabularWorld():
     def step(self):
         # Apply force_reset where needed
         self.observations[self.force_reset] = 0
-        self.force_reset = np.zeros_like(self.force_reset)
+        self.force_reset[...] = 0
         # Assume self.actions has been set, index into transition matrix to get next state and reward
         #print("Actions", self.actions)
         #print("Observations", self.observations)
         #print(self.transition_rewards[self.observations])
         #print(self.transition_rewards[self.observations, self.actions])
-        self.rewards = self.transition_rewards[self.observations,self.actions]
-        self.observations = self.transitions[self.observations,self.actions]
-        self.dones = (self.observations == self.transitions.shape[0] - 1).int()
+        self.rewards[...] = self.transition_rewards[self.observations,self.actions]
+        self.observations[...] = self.transitions[self.observations,self.actions]
+        self.dones[...] = (self.observations == self.transitions.shape[0] - 1).int()
         # Reset all the dones
         #print(self.observations.shape)
         #print(self.dones.shape)
