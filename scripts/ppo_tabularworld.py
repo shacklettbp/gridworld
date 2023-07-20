@@ -229,14 +229,27 @@ world.force_reset[0] = 1
 world.step()
 print()
 
+V = torch.zeros(num_states,
+                dtype=torch.float32, device=torch.device('cpu'))
+action_probs = torch.zeros(num_states, num_actions,
+                            dtype=torch.float32, device=torch.device('cpu'))
+
+logits = torch.zeros(num_states, num_actions,
+                            dtype=torch.float32, device=torch.device('cpu'))
+
+cur_rnn_states = []
+
+for shape in trained.recurrent_cfg.shapes:
+    cur_rnn_states.append(torch.zeros(
+        *shape[0:2], 1, shape[2], dtype=torch.float32, device=torch.device('cpu')))
+
 with torch.no_grad():
     # Note these collected values are pretty much meaningless with a recurrent policy
-    for r in range(num_rows):
-        for c in range(num_cols):
-            action_dist, value, cur_rnn_states = trained(cur_rnn_states, torch.tensor([[r, c]]).cpu())
-            V[r, c] = value[0, 0]
-            action_probs[r, c, :] = action_dist.probs()[0][0]
-            logits[r, c, :] = action_dist.dists[0].logits[0]
+    for i in range(num_states):
+        action_dist, value, cur_rnn_states = trained(cur_rnn_states, torch.tensor([[i]]).cpu())
+        V[i] = value[0]
+        action_probs[i, :] = action_dist.probs()[0][0]
+        logits[i, :] = action_dist.dists[0].logits[0]
 
     for state in cur_rnn_states:
         state.zero_()
@@ -249,27 +262,26 @@ with torch.no_grad():
         print("Reward:", world.rewards[0].cpu().numpy())
         print()
 
-print(f"Grid size: {num_rows} x {num_cols}")
-print(rewards)
-print(walls)
 print("\nV:")
 
-for r in range(num_rows):
-    for c in range(num_cols):
-        print(f"{V[r, c]: .2f} ", end='')
-    print()
+for i in range(num_states):
+    print(f"{V[i]: .2f} ", end='')
+print()
 
 print("\nAction probs:")
-for r in range(num_rows):
-    for c in range(num_cols):
-        probs = action_probs[r, c]
-        print(f"  {r}, {c}: [{probs[0]:.2f} {probs[1]:.2f} {probs[2]:.2f} {probs[3]:.2f}]")
+for i in range(num_states):
+    probs = action_probs[i]
+    print(f"  {i}: [{probs[0]:.2f} {probs[1]:.2f} {probs[2]:.2f}]")
 
 print("\nLogits:")
-for r in range(num_rows):
-    for c in range(num_cols):
-        l = logits[r, c]
-        print(f"  {r}, {c}: [{l[0]:.2f} {l[1]:.2f} {l[2]:.2f} {l[3]:.2f}]")
+for i in range(num_states):
+    l = logits[i]
+    print(f"  {i}: [{l[0]:.2f} {l[1]:.2f} {l[2]:.2f}]")
+
+print("\nTransitions:")
+for i in range(num_states):
+    l = world.transitions[i]
+    print(f"  {i}: [{l[0]} {l[1]} {l[2]}]")
 
 if args.plot and not args.dnn:
     plt.imshow(policy.actor.tbl.policy[:,0].reshape(num_rows, num_cols).cpu().detach().numpy())
