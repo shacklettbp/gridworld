@@ -113,10 +113,12 @@ class LearningCallback:
             advantage_min = update_results.advantages.min().cpu().item()
             advantage_max = update_results.advantages.max().cpu().item()
 
+            '''
             if args.dnn:
                 bootstrap_value_mean = update_results.bootstrap_values.mean().cpu().item()
                 bootstrap_value_min = update_results.bootstrap_values.min().cpu().item()
                 bootstrap_value_max = update_results.bootstrap_values.max().cpu().item()
+            '''
 
         print(f"\nUpdate: {update_id}")
         print(f"    Loss: {ppo.loss: .3e}, A: {ppo.action_loss: .3e}, V: {ppo.value_loss: .3e}, E: {ppo.entropy_loss: .3e}")
@@ -124,8 +126,8 @@ class LearningCallback:
         print(f"    Rewards          => Avg: {reward_mean: .3e}, Min: {reward_min: .3e}, Max: {reward_max: .3e}")
         print(f"    Values           => Avg: {value_mean: .3e}, Min: {value_min: .3e}, Max: {value_max: .3e}")
         print(f"    Advantages       => Avg: {advantage_mean: .3e}, Min: {advantage_min: .3e}, Max: {advantage_max: .3e}")
-        if args.dnn:
-            print(f"    Bootstrap Values => Avg: {bootstrap_value_mean: .3e}, Min: {bootstrap_value_min: .3e}, Max: {bootstrap_value_max: .3e}")
+        #if args.dnn:
+        #    print(f"    Bootstrap Values => Avg: {bootstrap_value_mean: .3e}, Min: {bootstrap_value_min: .3e}, Max: #{bootstrap_value_max: .3e}")
 
         if self.profile_report:
             print()
@@ -167,6 +169,11 @@ if args.dnn:
             dtype=torch.float32, device=obs.device)
         return obs.float() * div
 
+    def process_obs_multi(obs):
+        div = torch.tensor([[1 / float(num_rows), 1 / float(num_cols)]],
+            dtype=torch.float32, device=obs.device)
+        return torch.cat([obs.float() * div, torch.nn.functional.one_hot(torch.arange(obs.shape[0], device=obs.device) % num_actors).float()], dim=1)
+
     def make_rnn_encoder(num_channels):
         return RecurrentBackboneEncoder(
             net = MLP(
@@ -183,10 +190,52 @@ if args.dnn:
 
     def make_normal_encoder(num_channels):
         return BackboneEncoder(MLP(
+            input_dim = 2 + num_actors,
+            num_channels = num_channels,
+            num_layers = 2,
+        ))
+
+    '''
+    class MultiBackboneEncoder(BackboneEncoder):
+        def __init__(self, net, num_variants, num_channels):
+            super().__init__(net)
+            self.world_enc = torch.nn.Linear(num_variants, num_channels)
+            self.num_variants = num_variants
+
+        def forward(self, rnn_states, *inputs):
+            features = self.net(*inputs)
+            world_enc = self.world_enc(torch.nn.functional.one_hot(torch.arange(inputs[0].shape[0], device=inputs[0].device) % self.num_variants).float())
+            return features + world_enc, None
+
+        def fwd_inplace(self, rnn_states_out, rnn_states_in, *inputs):
+            return self.net(*inputs) + self.world_enc(torch.nn.functional.one_hot(torch.arange(inputs[0].shape[0], device=inputs[0].device) % self.num_variants).float())
+
+        # *inputs come in pre-flattened
+        def fwd_sequence(self, rnn_start_states,
+                        sequence_breaks, *flattened_inputs):
+            return self.net(*flattened_inputs) + self.world_enc(torch.nn.functional.one_hot(torch.arange(flattened_inputs[0].shape[0], device=flattened_inputs[0].device) % self.num_variants).float())
+
+    def make_multi_encoder(num_channels, num_variants):
+        return MultiBackboneEncoder(MLP(
+            input_dim = 2,
+            num_channels = num_channels,
+            num_layers = 2,
+        ), num_variants, num_channels)
+    '''
+
+    '''
+    def make_multi_encoder(num_channels, num_variants):
+        bbe = BackboneEncoder(MLP(
             input_dim = 2,
             num_channels = num_channels,
             num_layers = 2,
         ))
+        def multi_func(obs):
+            temp = bbe(obs)
+            world_enc = torch.nn.functional.one_hot(torch.arange(obs.shape[0]) // num_variants).to(temp.device)
+            return torch.cat([temp, world_enc], dim=-1)
+        return multi_func
+    '''
 
     if args.separate_value:
         # Use different channel dims just to make sure everything is being passed correctly
@@ -202,12 +251,12 @@ if args.dnn:
         assert(args.actor_rnn == args.critic_rnn)
 
         backbone = BackboneShared(
-            process_obs = process_obs,
+            process_obs = process_obs_multi,
             encoder = make_rnn_encoder(args.num_channels) if args.actor_rnn else make_normal_encoder(args.num_channels),
         )
 
-        actor_input = args.num_channels
-        critic_input = args.num_channels
+        actor_input = args.num_channels# + num_actors
+        critic_input = args.num_channels# + num_critics
 
     policy = ActorCritic(
         backbone = backbone,
