@@ -20,41 +20,6 @@ import warnings
 warnings.filterwarnings("error")
 import matplotlib.pyplot as plt
 
-class PPOTabularMultiActor(DiscreteActor):
-    def __init__(self, num_states, num_actions, num_actors):
-        tbls = []
-        for actor_id in range(num_actors):
-            tbls.append(TabularPolicy(num_states, num_actions, False))
-        # Eval policy: function that takes in a batch of states, and divides the batch across each actor
-        # Then, for each actor, it samples an action from the policy of that actor
-        def eval_policy(states): 
-            actor_batch = states.shape[0] // num_actors
-            if actor_batch == 0:
-                actor_batch = 1
-            #print("Running actor")
-            return torch.cat([tbls[actor_id].policy[states[actor_id*actor_batch:(actor_id + 1)*actor_batch].squeeze(-1)] for actor_id in range(num_actors)])#.unsqueeze(-1)
-        super().__init__([num_actions], eval_policy)
-        self.tbls = torch.nn.ModuleList(tbls)
-
-
-class PPOTabularMultiCritic(Critic):
-    def __init__(self, num_states, num_critics):
-        tbls = []
-        for critic_id in range(num_critics):
-            tbls.append(TabularValue(num_states))
-        # Eval V: function that takes in a batch of states, and divides the batch across each critic
-        # Then, for each critic, it evaluates the value of each state in the batch
-        def eval_V(states):
-            actor_batch = states.shape[0] // num_critics
-            if actor_batch == 0:
-                actor_batch = 1
-            #print("Running critic")
-            to_return = torch.cat([tbls[critic_id].V[states[critic_id*actor_batch:(critic_id + 1)*actor_batch]] for critic_id in range(num_critics)])
-            #print([tbls[critic_id].V[states[critic_id*actor_batch:(critic_id + 1)*actor_batch]] for critic_id in range(num_critics)])
-            return to_return
-        super().__init__(eval_V)
-        self.tbls = torch.nn.ModuleList(tbls)
-
 arg_parser = argparse.ArgumentParser()
 arg_parser.add_argument('--num-worlds', type=int, required=True)
 arg_parser.add_argument('--num-updates', type=int, required=True)
@@ -84,6 +49,49 @@ arg_parser.add_argument('--num-critics', type=int, default=1)
 # --num-worlds 1024 --num-updates 1000 --dnn --lr 0.001 --entropy-loss-coef 0.3 --steps-per-update 10 --separate-value --num-channels 256 --gamma 0.998
 
 args = arg_parser.parse_args()
+
+class PPOTabularMultiActor(DiscreteActor):
+    def __init__(self, num_states, num_actions, num_actors):
+        tbls = []
+        for actor_id in range(num_actors):
+            tbls.append(TabularPolicy(num_states, num_actions, False))
+        # Eval policy: function that takes in a batch of states, and divides the batch across each actor
+        # Then, for each actor, it samples an action from the policy of that actor
+        def eval_policy(states): 
+            #print("Initial shape", states.shape)
+            states = states.reshape(-1, args.num_worlds, 1)
+            #actor_batch = args.num_worlds // num_actors
+            #if actor_batch == 0:
+            #    actor_batch = 1
+            #print("Running actor")
+            to_return = torch.stack([tbls[actor_id].policy[states[:, actor_id::num_actors].squeeze(-1)] for actor_id in range(num_actors)], dim = 2).flatten(0,2)
+            #print("Return shape", to_return.shape)
+            return to_return.reshape(-1, num_actions)
+        super().__init__([num_actions], eval_policy)
+        self.tbls = torch.nn.ModuleList(tbls)
+
+
+class PPOTabularMultiCritic(Critic):
+    def __init__(self, num_states, num_critics):
+        tbls = []
+        for critic_id in range(num_critics):
+            tbls.append(TabularValue(num_states))
+        # Eval V: function that takes in a batch of states, and divides the batch across each critic
+        # Then, for each critic, it evaluates the value of each state in the batch
+        def eval_V(states):
+            #print("V shape", states.shape)
+            states = states.reshape(-1, args.num_worlds, 1)
+            #actor_batch = args.num_worlds // num_critics
+            #if actor_batch == 0:
+            #    actor_batch = 1
+            #print("Running critic")
+            to_return = torch.stack([tbls[critic_id].V[states[:, critic_id::num_critics]] for critic_id in range(num_critics)],
+                dim = 2).flatten(0,2)
+            #print([tbls[critic_id].V[states[critic_id*actor_batch:(critic_id + 1)*actor_batch]] for critic_id in range(num_critics)])
+            #print("Return V shape", to_return.shape)
+            return to_return.reshape(-1, 1)
+        super().__init__(eval_V)
+        self.tbls = torch.nn.ModuleList(tbls)
 
 class LearningCallback:
     def __init__(self, profile_report):
@@ -172,6 +180,7 @@ if args.dnn:
     def process_obs_multi(obs):
         div = torch.tensor([[1 / float(num_rows), 1 / float(num_cols)]],
             dtype=torch.float32, device=obs.device)
+        print(obs.shape)
         return torch.cat([obs.float() * div, torch.nn.functional.one_hot(torch.arange(obs.shape[0], device=obs.device) % num_actors).float()], dim=1)
 
     def make_rnn_encoder(num_channels):
@@ -304,16 +313,16 @@ trained = train(
     update_cb,
 )
 
-world.force_reset[0:num_actors] = 1
+world.force_reset[0:args.num_worlds] = 1
 world.step()
 print()
 
-V = torch.zeros(num_rows, num_cols, num_actors,
+V = torch.zeros(num_rows, num_cols, args.num_worlds,
                 dtype=torch.float32, device=torch.device('cpu'))
-action_probs = torch.zeros(num_rows, num_cols, num_actors, num_actions, 
+action_probs = torch.zeros(num_rows, num_cols, args.num_worlds, num_actions, 
                             dtype=torch.float32, device=torch.device('cpu'))
 
-logits = torch.zeros(num_rows, num_cols, num_actors, num_actions, 
+logits = torch.zeros(num_rows, num_cols, args.num_worlds, num_actions, 
                             dtype=torch.float32, device=torch.device('cpu'))
 
 cur_rnn_states = []
@@ -326,7 +335,7 @@ with torch.no_grad():
     # Note these collected values are pretty much meaningless with a recurrent policy
     for r in range(num_rows):
         for c in range(num_cols):
-            action_dist, value, cur_rnn_states = trained(cur_rnn_states, torch.tensor([[r, c]]).cpu().repeat(num_actors, 1))
+            action_dist, value, cur_rnn_states = trained(cur_rnn_states, torch.tensor([[r, c]]).cpu().repeat(args.num_worlds, 1))
             V[r, c] = value[:,0]
             action_probs[r, c, :, :] = action_dist.probs()[0]#[0]
             logits[r, c, :] = action_dist.dists[0].logits#[0]
@@ -336,7 +345,7 @@ with torch.no_grad():
 
     for i in range(10):
         print("Obs:   ", world.observations[0:num_actors])
-        trained.fwd_actor(world.actions[0:num_actors], cur_rnn_states, cur_rnn_states, world.observations[0:num_actors])
+        trained.fwd_actor(world.actions[0:args.num_worlds], cur_rnn_states, cur_rnn_states, world.observations[0:args.num_worlds])
         print("Action:", world.actions[0:num_actors].cpu().numpy())
         world.step()
         print("Reward:", world.rewards[0:num_actors].cpu().numpy())
