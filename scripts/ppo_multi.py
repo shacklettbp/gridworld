@@ -180,7 +180,7 @@ if args.dnn:
     def process_obs_multi(obs):
         div = torch.tensor([[1 / float(num_rows), 1 / float(num_cols)]],
             dtype=torch.float32, device=obs.device)
-        print(obs.shape)
+        #print(obs.shape)
         return torch.cat([obs.float() * div, torch.nn.functional.one_hot(torch.arange(obs.shape[0], device=obs.device) % num_actors).float()], dim=1)
 
     def make_rnn_encoder(num_channels):
@@ -308,8 +308,8 @@ trained = train(
             clip_value_loss=False,
         ),
         mixed_precision = args.fp16,
-        normalize_advantages=False,
-        normalize_values=False,
+        normalize_advantages=True,
+        normalize_values=True,
     ),
     policy,
     update_cb,
