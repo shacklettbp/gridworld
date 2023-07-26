@@ -304,16 +304,16 @@ trained = train(
     update_cb,
 )
 
-world.force_reset[0] = 1
+world.force_reset[0:num_actors] = 1
 world.step()
 print()
 
-V = torch.zeros(num_rows, num_cols,
+V = torch.zeros(num_rows, num_cols, num_actors,
                 dtype=torch.float32, device=torch.device('cpu'))
-action_probs = torch.zeros(num_rows, num_cols, num_actions,
+action_probs = torch.zeros(num_rows, num_cols, num_actors, num_actions, 
                             dtype=torch.float32, device=torch.device('cpu'))
 
-logits = torch.zeros(num_rows, num_cols, num_actions,
+logits = torch.zeros(num_rows, num_cols, num_actors, num_actions, 
                             dtype=torch.float32, device=torch.device('cpu'))
 
 cur_rnn_states = []
@@ -326,23 +326,20 @@ with torch.no_grad():
     # Note these collected values are pretty much meaningless with a recurrent policy
     for r in range(num_rows):
         for c in range(num_cols):
-            action_dist, value, cur_rnn_states = trained(cur_rnn_states, torch.tensor([[r, c]]).cpu())
-            #print(action_dist)
-            #print(value)
-            #print(cur_rnn_states)
-            V[r, c] = value[0, 0]
-            action_probs[r, c, :] = action_dist.probs()[0][0]
-            logits[r, c, :] = action_dist.dists[0].logits[0]
+            action_dist, value, cur_rnn_states = trained(cur_rnn_states, torch.tensor([[r, c]]).cpu().repeat(num_actors, 1))
+            V[r, c] = value[:,0]
+            action_probs[r, c, :, :] = action_dist.probs()[0]#[0]
+            logits[r, c, :] = action_dist.dists[0].logits#[0]
 
     for state in cur_rnn_states:
         state.zero_()
 
     for i in range(10):
-        print("Obs:   ", world.observations[0])
-        trained.fwd_actor(world.actions[0:1], cur_rnn_states, cur_rnn_states, world.observations[0:1])
-        print("Action:", world.actions[0].cpu().numpy())
+        print("Obs:   ", world.observations[0:num_actors])
+        trained.fwd_actor(world.actions[0:num_actors], cur_rnn_states, cur_rnn_states, world.observations[0:num_actors])
+        print("Action:", world.actions[0:num_actors].cpu().numpy())
         world.step()
-        print("Reward:", world.rewards[0].cpu().numpy())
+        print("Reward:", world.rewards[0:num_actors].cpu().numpy())
         print()
 
 print(f"Grid size: {num_rows} x {num_cols}")
@@ -350,22 +347,28 @@ print(rewards)
 print(walls)
 print("\nV:")
 
-for r in range(num_rows):
-    for c in range(num_cols):
-        print(f"{V[r, c]: .2f} ", end='')
+for a in range(num_actors):
+    for r in range(num_rows):
+        for c in range(num_cols):
+            print(f"{V[r, c, a]: .2f} ", end='')
+        print()
     print()
 
 print("\nAction probs:")
-for r in range(num_rows):
-    for c in range(num_cols):
-        probs = action_probs[r, c]
-        print(f"  {r}, {c}: [{probs[0]:.2f} {probs[1]:.2f} {probs[2]:.2f} {probs[3]:.2f}]")
+for a in range(num_actors):
+    for r in range(num_rows):
+        for c in range(num_cols):
+            probs = action_probs[r, c, a]
+            print(f"  {r}, {c}: [{probs[0]:.2f} {probs[1]:.2f} {probs[2]:.2f} {probs[3]:.2f}]")
+    print()
 
 print("\nLogits:")
-for r in range(num_rows):
-    for c in range(num_cols):
-        l = logits[r, c]
-        print(f"  {r}, {c}: [{l[0]:.2f} {l[1]:.2f} {l[2]:.2f} {l[3]:.2f}]")
+for a in range(num_actors):
+    for r in range(num_rows):
+        for c in range(num_cols):
+            l = logits[r, c, a]
+            print(f"  {r}, {c}: [{l[0]:.2f} {l[1]:.2f} {l[2]:.2f} {l[3]:.2f}]")
+    print()
 
 if args.plot and not args.dnn:
     plt.imshow(policy.actor.tbl.policy[:,0].reshape(num_rows, num_cols).cpu().detach().numpy())
@@ -376,8 +379,8 @@ if args.plot and not args.dnn:
     plt.show()
     plt.imshow(policy.actor.tbl.policy[:,3].reshape(num_rows, num_cols).cpu().detach().numpy())
     plt.show()
-    print(policy.actor.tbl.policy[:,0])
-    print(policy.actor.tbl.policy[:,0].detach().numpy().reshape(num_cols, num_rows).swapaxes(0,1).copy().flatten())
+    #print(policy.actor.tbl.policy[:,0])
+    #print(policy.actor.tbl.policy[:,0].detach().numpy().reshape(num_cols, num_rows).swapaxes(0,1).copy().flatten())
     '''
     plt.imshow(policy.actor.tbl.policy[:,0].detach().numpy().reshape(num_cols, num_rows).swapaxes(0,1).copy().reshape(num_cols, num_rows))
     plt.show()
