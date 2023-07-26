@@ -308,6 +308,8 @@ trained = train(
             clip_value_loss=False,
         ),
         mixed_precision = args.fp16,
+        normalize_advantages=False,
+        normalize_values=False,
     ),
     policy,
     update_cb,
