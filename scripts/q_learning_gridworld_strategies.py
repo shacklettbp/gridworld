@@ -34,6 +34,7 @@ walls = torch.tensor(walls)
 v_dict[walls == 1] = 0.
 
 visit_dict = torch.zeros((walls.shape[0], walls.shape[1], 4), dtype=int) # Key: [obs, action], Value: # visits
+visit_dict[start_cell[0], start_cell[1], :] = 1
 
 # Create queue for DP
 # curr_obs = torch.tensor([[5,4]]).repeat(num_worlds, 1)
@@ -55,8 +56,12 @@ for i in range(num_steps):
             grid_world.observations[restarts, :] = start_cell.repeat(torch.sum(restarts), 1).type(torch.int)
         elif random_state_type == 1:
             #grid_world.observations[restarts, :] = torch.cat([torch.randint(0, walls.shape[0], size=(torch.sum(restarts),1)), torch.randint(0, walls.shape[1], size=(torch.sum(restarts),1))], dim=1).type(torch.int)
-            grid_world.observations[restarts, :] = valid_states[torch.randint(0, valid_states.shape[0], size=(torch.sum(restarts),)), :]#.squeeze()
-            curr_rewards[restarts] = 0
+            grid_world.observations[restarts, :] = valid_states[torch.randint(0, valid_states.shape[0], size=(torch.sum(restarts),)), :]
+        elif random_state_type == 2:
+            # Sample only from already-visited but underexplored states
+            visited_states = torch.nonzero(visit_dict).type(torch.int)
+            grid_world.observations[restarts, :] = visited_states[torch.randint(0, visited_states.shape[0], size=(torch.sum(restarts),)), :2]
+        curr_rewards[restarts] = 0
 
     curr_states = grid_world.observations.clone()
 
