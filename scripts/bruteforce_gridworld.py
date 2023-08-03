@@ -93,8 +93,14 @@ print(states_count, states_count.shape)
 print(states_values, states_values.shape)
 
 im = torch.zeros((torch.max(unique_states[:,0]) + 1, torch.max(unique_states[:,1]) + 1, torch.max(unique_states[:,2]) + 1))
+im2 = torch.zeros((torch.max(unique_states[:,0]) + 1, torch.max(unique_states[:,1]) + 1))
 for (i, state) in enumerate(unique_states):
     im[state[0], state[1], state[2]] = states_values[i]
+    im2[state[0], state[1]] += states_count[i]
+plt.imshow(im2)
+plt.colorbar()
+plt.show()
+exit()
 plt.imshow(im[:,:,0])
 plt.show()
 plt.imshow(im[:,:,1])

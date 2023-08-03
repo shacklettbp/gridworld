@@ -24,9 +24,12 @@ print(start_cell, end_cell, walls)
 
 q_dict = torch.full((walls.shape[0], walls.shape[1], 4),-10000.) # Key: [obs, action], Value: [q]
 v_dict = torch.full((walls.shape[0], walls.shape[1]),-10000.) # Key: obs, Value: v
-v_dict[4,5] = 1.
+v_dict[end_cell[0,0], end_cell[0,1]] = 1.
 # Also set walls to 0
-v_dict[3,2:] = 0.
+walls = torch.tensor(walls)
+v_dict[walls == 1] = 0.
+
+visit_dict = torch.zeros((walls.shape[0], walls.shape[1])) # Key: [obs, action], Value: # visits
 
 # Create queue for DP
 # curr_obs = torch.tensor([[5,4]]).repeat(num_worlds, 1)
@@ -68,14 +71,22 @@ for i in range(num_steps):
     '''
     next_states[dones == 1,0] = end_cell[0,0]
     next_states[dones == 1,1] = end_cell[0,1]
+
+    unique_states, states_count = torch.unique(curr_states, dim=0, return_counts=True)
+
     q_dict[curr_states[:,0], curr_states[:,1], curr_actions] = torch.max(
         q_dict[curr_states[:,0], curr_states[:,1], curr_actions], curr_rewards + discount * v_dict[next_states[:,0], next_states[:,1]]
     )
     v_dict[curr_states[:,0], curr_states[:,1]] = torch.max(
         v_dict[curr_states[:,0], curr_states[:,1]], curr_rewards + discount * v_dict[next_states[:,0], next_states[:,1]]
     )
+    visit_dict[unique_states[:,0], unique_states[:,1]] += states_count
 
     curr_rewards = next_rewards * (1 - dones)
 
 plt.imshow(v_dict)
+plt.show()
+
+plt.imshow(visit_dict)
+plt.colorbar()
 plt.show()
