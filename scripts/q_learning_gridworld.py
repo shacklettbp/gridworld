@@ -74,11 +74,13 @@ for i in range(num_steps):
 
     unique_states, states_count = torch.unique(curr_states, dim=0, return_counts=True)
 
-    q_dict[curr_states[:,0], curr_states[:,1], curr_actions] = torch.max(
-        q_dict[curr_states[:,0], curr_states[:,1], curr_actions], curr_rewards + discount * v_dict[next_states[:,0], next_states[:,1]]
+    # Clobbering of values prioritizes last assignment so get index sort of curr_rewards
+    rewards_order = torch.argsort(curr_rewards)
+    q_dict[curr_states[rewards_order,0], curr_states[rewards_order,1], curr_actions] = torch.max(
+        q_dict[curr_states[rewards_order,0], curr_states[rewards_order,1], curr_actions], curr_rewards + discount * v_dict[next_states[rewards_order,0], next_states[rewards_order,1]]
     )
-    v_dict[curr_states[:,0], curr_states[:,1]] = torch.max(
-        v_dict[curr_states[:,0], curr_states[:,1]], curr_rewards + discount * v_dict[next_states[:,0], next_states[:,1]]
+    v_dict[curr_states[rewards_order,0], curr_states[rewards_order,1]] = torch.max(
+        v_dict[curr_states[rewards_order,0], curr_states[rewards_order,1]], curr_rewards + discount * v_dict[next_states[rewards_order,0], next_states[rewards_order,1]]
     )
     visit_dict[unique_states[:,0], unique_states[:,1]] += states_count
 
