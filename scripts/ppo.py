@@ -19,6 +19,9 @@ import torch
 import warnings
 warnings.filterwarnings("error")
 import matplotlib.pyplot as plt
+import time
+import wandb
+from torch.utils.tensorboard import SummaryWriter
 
 class PPOTabularActor(DiscreteActor):
     def __init__(self, num_states, num_actions):
@@ -54,6 +57,7 @@ arg_parser.add_argument('--actor-rnn', action='store_true')
 arg_parser.add_argument('--critic-rnn', action='store_true')
 arg_parser.add_argument('--num-bptt-chunks', type=int, default=1)
 arg_parser.add_argument('--profile-report', action='store_true')
+arg_parser.add_argument('--seed', type=int, default=0)
 # Working DNN hyperparams:
 # --num-worlds 1024 --num-updates 1000 --dnn --lr 0.001 --entropy-loss-coef 0.1
 # --num-worlds 1024 --num-updates 1000 --dnn --lr 0.001 --entropy-loss-coef 0.3 --separate-value
@@ -62,6 +66,52 @@ arg_parser.add_argument('--profile-report', action='store_true')
 # --num-worlds 1024 --num-updates 1000 --dnn --lr 0.001 --entropy-loss-coef 0.3 --steps-per-update 10 --separate-value --num-channels 256 --gamma 0.998
 
 args = arg_parser.parse_args()
+
+with open(pathlib.Path(__file__).parent / "world_configs/test_world.pkl", 'rb') as handle:
+    start_cell, end_cell, rewards, walls = pkl.load(handle)
+
+world = GridWorld(args.num_worlds, start_cell, end_cell, rewards, walls)
+
+if torch.cuda.is_available():
+    dev = torch.device(f'cuda:{args.gpu_id}')
+elif torch.backends.mps.is_available() and False:
+    dev = torch.device('mps')
+else:
+    dev = torch.device('cpu')
+
+num_rows = walls.shape[0]
+num_cols = walls.shape[1]
+
+run_name = f"ppogrid__{args.num_worlds}__{args.steps_per_update}__{args.seed}__{int(time.time())}_torch"
+
+num_states = num_rows * num_cols
+num_actions = 4 
+
+visit_dict = torch.zeros((walls.shape[0], walls.shape[1], 4), dtype=int) # Key: [obs, action], Value: # visits
+visit_dict[start_cell[0], start_cell[1], :] = 1
+
+wandb.init(
+    project="cleanRL",
+    entity=None,
+    sync_tensorboard=True,
+    config=vars(args),
+    name=run_name,
+    monitor_gym=True,
+    save_code=True,
+)
+
+writer = SummaryWriter(f"runs/{run_name}")
+writer.add_text(
+    "hyperparameters",
+    "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
+)
+
+start_time = time.time()
+
+def to1D(obs):
+    with torch.no_grad():
+        obs_1d = obs[:, 0] * num_cols + obs[:, 1]
+        return obs_1d.view(*obs.shape[:-1], 1)
 
 class LearningCallback:
     def __init__(self, profile_report):
@@ -77,8 +127,12 @@ class LearningCallback:
             return
 
         ppo = update_results.ppo_stats
+        unique_states, states_count = torch.unique(torch.cat([update_results.obs, update_results.actions],dim=2).reshape(-1,3), dim=0, return_counts=True)
+        print(unique_states, states_count)
+        visit_dict[unique_states[:,0], unique_states[:,1], unique_states[:,2]] += states_count
 
         with torch.no_grad():
+
             reward_mean = update_results.rewards.mean().cpu().item()
             reward_min = update_results.rewards.min().cpu().item()
             reward_max = update_results.rewards.max().cpu().item()
@@ -96,6 +150,20 @@ class LearningCallback:
                 bootstrap_value_min = update_results.bootstrap_values.min().cpu().item()
                 bootstrap_value_max = update_results.bootstrap_values.max().cpu().item()
 
+        global_step = update_id*args.num_worlds*args.steps_per_update
+        print(learning_state)
+        writer.add_scalar("charts/learning_rate", learning_state.optimizer.param_groups[0]["lr"], global_step)
+        writer.add_scalar("losses/value_loss", ppo.value_loss, global_step)
+        writer.add_scalar("losses/policy_loss", ppo.action_loss, global_step)
+        writer.add_scalar("losses/entropy", ppo.entropy_loss, global_step)
+
+        writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+        writer.add_scalar("charts/avg_reward", reward_mean, global_step)
+        writer.add_scalar("charts/avg_value", value_mean, global_step)
+        writer.add_scalar("charts/unvisited_states", visit_dict.sum(2).eq(0).sum().item(), global_step)
+        writer.add_scalar("charts/underexplored_states", (visit_dict.sum(2) < 10).sum().item(), global_step)
+        writer.add_scalar("charts/exploration_variance", visit_dict.sum(2).float().std().item() / visit_dict.sum(2).float().mean().item(), global_step)
+
         print(f"\nUpdate: {update_id}")
         print(f"    Loss: {ppo.loss: .3e}, A: {ppo.action_loss: .3e}, V: {ppo.value_loss: .3e}, E: {ppo.entropy_loss: .3e}")
         print()
@@ -109,30 +177,6 @@ class LearningCallback:
             print()
             print(f"    FPS: {fps:.0f}, Update Time: {update_time:.2f}, Avg FPS: {self.mean_fps:.0f}")
             profile.report()
-
-with open(pathlib.Path(__file__).parent / "world_configs/test_world.pkl", 'rb') as handle:
-    start_cell, end_cell, rewards, walls = pkl.load(handle)
-
-# Start from the end cell...
-world = GridWorld(args.num_worlds, start_cell, end_cell, rewards, walls)
-
-if torch.cuda.is_available():
-    dev = torch.device(f'cuda:{args.gpu_id}')
-elif torch.backends.mps.is_available() and False:
-    dev = torch.device('mps')
-else:
-    dev = torch.device('cpu')
-
-num_rows = walls.shape[0]
-num_cols = walls.shape[1]
-
-num_states = num_rows * num_cols
-num_actions = 4 
-
-def to1D(obs):
-    with torch.no_grad():
-        obs_1d = obs[:, 0] * num_cols + obs[:, 1]
-        return obs_1d.view(*obs.shape[:-1], 1)
 
 update_cb = LearningCallback(args.profile_report)
 

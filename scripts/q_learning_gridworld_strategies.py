@@ -6,16 +6,34 @@ import sys
 import torch
 import pickle as pkl
 import pathlib
+import time
+import wandb
+import argparse
+from torch.utils.tensorboard import SummaryWriter
 
 from gridworld import GridWorld
 
-num_worlds = int(sys.argv[1])
-num_steps = int(sys.argv[2])
-discount = float(sys.argv[3])
-policy = str(sys.argv[4])
-random_act_frac = float(sys.argv[5])
-random_state_frac = float(sys.argv[6])
-random_state_type = int(sys.argv[7])
+arg_parser = argparse.ArgumentParser()
+arg_parser.add_argument('--num-worlds', type=int, required=True)
+arg_parser.add_argument('--num-steps', type=int, required=True)
+arg_parser.add_argument('--discount', type=float, default=0.99)
+arg_parser.add_argument('--policy', type=str, default='ucb')
+arg_parser.add_argument('--random-act-frac', type=float, default=0.)
+arg_parser.add_argument('--random-state-frac', type=float, default=0.)
+arg_parser.add_argument('--random-state-type', type=int, default=0)
+arg_parser.add_argument('--seed', type=int, default=0)
+arg_parser.add_argument('--tag', type=str, default=None)
+args = arg_parser.parse_args()
+
+num_worlds = args.num_worlds
+num_steps = args.num_steps
+discount = args.discount
+policy = args.policy
+random_act_frac = args.random_act_frac
+random_state_frac = args.random_state_frac
+random_state_type = args.random_state_type
+
+run_name = f"qlearngrid__{num_worlds}__{num_steps}__{args.seed}__{int(time.time())}_torch"
 
 with open(pathlib.Path(__file__).parent / "world_configs/test_world.pkl", 'rb') as handle:
     start_cell, end_cell, rewards, walls = pkl.load(handle)
@@ -47,6 +65,24 @@ valid_states = torch.nonzero(1. - walls).type(torch.int)
 #print(end_cell.shape, valid_states.shape)
 valid_states = valid_states[(valid_states != torch.tensor(end_cell)).sum(axis=1) > 0]
 
+wandb.init(
+    project="cleanRL",
+    entity=None,
+    sync_tensorboard=True,
+    config=vars(args),
+    name=run_name,
+    monitor_gym=True,
+    save_code=True,
+)
+
+writer = SummaryWriter(f"runs/{run_name}")
+writer.add_text(
+    "hyperparameters",
+    "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
+)
+
+start_time = time.time()
+
 for i in range(num_steps):
     # Account for random restarts or sampling into random or unvisited or underexplored states
     if random_state_frac > 0.:
@@ -72,11 +108,11 @@ for i in range(num_steps):
     elif policy == "ucb":
         # UCB
         visit_counts = visit_dict[curr_states[:,0], curr_states[:,1]] + 1
-        print(visit_counts[0])
+        #print(visit_counts[0])
         ucb = action_qs + torch.sqrt((0.5 * np.log(1./0.05) / visit_counts)) # Hoeffding 95% confidence
-        print(action_qs[0])
-        print(curr_states[0])
-        print(ucb[0])
+        #print(action_qs[0])
+        #print(curr_states[0])
+        #print(ucb[0])
         grid_world.actions[:, 0] = torch.argmax(ucb, dim=1)
     else:
         raise ValueError("Invalid policy")
@@ -112,6 +148,15 @@ for i in range(num_steps):
     visit_dict[unique_states[:,0], unique_states[:,1], unique_states[:,2]] += states_count
 
     curr_rewards = next_rewards * (1 - dones)
+
+    # Write stats
+    global_step = (i + 1)*num_worlds
+    writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+    writer.add_scalar("charts/avg_value", v_dict[curr_states[rewards_order,0], curr_states[rewards_order,1]].mean().item(), global_step)
+    writer.add_scalar("charts/rollout_value", v_dict[start_cell[0,0], start_cell[0,1]], global_step)
+    writer.add_scalar("charts/unvisited_states", visit_dict.sum(2).eq(0).sum().item(), global_step)
+    writer.add_scalar("charts/underexplored_states", (visit_dict.sum(2) < 10).sum().item(), global_step)
+    writer.add_scalar("charts/exploration_variance", visit_dict.sum(2).float().std().item() / visit_dict.sum(2).float().mean().item(), global_step)
 
 plt.imshow(v_dict)
 plt.show()
