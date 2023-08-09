@@ -43,6 +43,7 @@ grid_world = GridWorld(num_worlds, start_cell, end_cell, rewards, walls)
 
 print(grid_world.observations.shape)
 print(start_cell, end_cell, walls)
+#exit()
 
 q_dict = torch.full((walls.shape[0], walls.shape[1], 4),0.) # Key: [obs, action], Value: [q]
 v_dict = torch.full((walls.shape[0], walls.shape[1]),0.) # Key: obs, Value: v
@@ -86,6 +87,7 @@ start_time = time.time()
 for i in range(num_steps):
     # Account for random restarts or sampling into random or unvisited or underexplored states
     if random_state_frac > 0.:
+        #print("We should not be here")
         # Random restarts
         restarts = torch.rand(num_worlds) < random_state_frac
         if random_state_type == 0:
@@ -119,15 +121,19 @@ for i in range(num_steps):
     
     # Replace portion of actions with random
     if random_act_frac > 0.:
+        #print("We should not be here")
         random_rows = torch.rand(num_worlds) < random_act_frac
-        grid_world.actions[random_rows, 0] = torch.randint(0, 4, size=(random_rows.sum()),).type(torch.int)
+        grid_world.actions[random_rows, 0] = torch.randint(0, 4, size=(random_rows.sum(),)).type(torch.int)
 
     curr_actions = grid_world.actions.clone().flatten()
 
     # Advance simulation across all worlds
     grid_world.step()
+    if i == 0: # bug fix
+        continue
 
     dones = grid_world.dones.clone().flatten()
+    #print(dones[0])
 
     next_states = grid_world.observations.clone()
     next_rewards = grid_world.rewards.clone().flatten() * (1 - dones)

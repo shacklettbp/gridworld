@@ -5,7 +5,7 @@ SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 for seed in {1..5}
 do
     echo $seed
-    for num_worlds in 1 10 100 1000 10000
+    for num_worlds in 100 1000 10000
     do
         let num_steps=10000/$num_worlds
         echo $num_steps
@@ -25,7 +25,7 @@ do
                         --random-act-frac $random_act_frac \
                         --random-state-frac $random_restart_frac \
                         --random-state-type $random_restart_type \
-                        --tag "qlearn_sweep"
+                        --tag "qlearn_sweep_3"
                 done
             done
         done

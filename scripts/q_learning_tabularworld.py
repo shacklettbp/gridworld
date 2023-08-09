@@ -14,7 +14,7 @@ num_steps = int(sys.argv[2])
 discount = float(sys.argv[3])
 
 # Start from the end cell...
-world = TabularWorld("/Users/sarukkai/Downloads/mdp.npz", num_worlds)
+world = TabularWorld("/data/rl/effective-horizon/path/to/store/mdp/consolidated_ignore_screen.npz", num_worlds)
 #world.vis_world()
 num_states = world.transitions.shape[0]
 num_actions = world.transitions.shape[1]
@@ -28,6 +28,8 @@ v_dict[num_states - 1] = 1.
 curr_rewards = torch.zeros(num_worlds, 1)
 
 for i in range(num_steps):
+    if i % 10 == 0:
+        print(i)
     # "Policy"
     world.actions[:, 0] = torch.randint(0, num_actions, size=(num_worlds,))
 

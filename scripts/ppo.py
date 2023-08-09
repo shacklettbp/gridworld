@@ -17,7 +17,7 @@ from gridworld import GridWorld
 from tabular_policy import TabularPolicy, TabularValue
 import torch
 import warnings
-warnings.filterwarnings("error")
+#warnings.filterwarnings("error")
 import matplotlib.pyplot as plt
 import time
 import wandb
@@ -58,6 +58,7 @@ arg_parser.add_argument('--critic-rnn', action='store_true')
 arg_parser.add_argument('--num-bptt-chunks', type=int, default=1)
 arg_parser.add_argument('--profile-report', action='store_true')
 arg_parser.add_argument('--seed', type=int, default=0)
+arg_parser.add_argument('--tag', type=str, default=None)
 # Working DNN hyperparams:
 # --num-worlds 1024 --num-updates 1000 --dnn --lr 0.001 --entropy-loss-coef 0.1
 # --num-worlds 1024 --num-updates 1000 --dnn --lr 0.001 --entropy-loss-coef 0.3 --separate-value
@@ -87,7 +88,7 @@ run_name = f"ppogrid__{args.num_worlds}__{args.steps_per_update}__{args.seed}__{
 num_states = num_rows * num_cols
 num_actions = 4 
 
-visit_dict = torch.zeros((walls.shape[0], walls.shape[1], 4), dtype=int) # Key: [obs, action], Value: # visits
+visit_dict = torch.zeros((walls.shape[0], walls.shape[1], 4), dtype=int, device=dev) # Key: [obs, action], Value: # visits
 visit_dict[start_cell[0], start_cell[1], :] = 1
 
 wandb.init(
@@ -279,18 +280,18 @@ world.step()
 print()
 
 V = torch.zeros(num_rows, num_cols,
-                dtype=torch.float32, device=torch.device('cpu'))
+                dtype=torch.float32, device=dev)
 action_probs = torch.zeros(num_rows, num_cols, num_actions,
-                            dtype=torch.float32, device=torch.device('cpu'))
+                            dtype=torch.float32, device=dev)
 
 logits = torch.zeros(num_rows, num_cols, num_actions,
-                            dtype=torch.float32, device=torch.device('cpu'))
+                            dtype=torch.float32, device=dev)
 
 cur_rnn_states = []
 
 for shape in trained.recurrent_cfg.shapes:
     cur_rnn_states.append(torch.zeros(
-        *shape[0:2], 1, shape[2], dtype=torch.float32, device=torch.device('cpu')))
+        *shape[0:2], 1, shape[2], dtype=torch.float32, device=dev))
 
 with torch.no_grad():
     # Note these collected values are pretty much meaningless with a recurrent policy
