@@ -25,18 +25,18 @@ def load_npz(filename):
     return transitions, rewards
 
 class TabularWorld():
-    def __init__(self, filename, num_worlds):
+    def __init__(self, filename, num_worlds, device):
         transitions, rewards = load_npz(filename)
         # Core transition matrix
-        self.transitions = torch.tensor(transitions)
-        self.transition_rewards = torch.tensor(rewards)
+        self.transitions = torch.tensor(transitions, device = device)
+        self.transition_rewards = torch.tensor(rewards, device = device)
         # Current state
-        self.observations = torch.zeros((num_worlds, 1), dtype=torch.int32)
-        self.actions = torch.zeros((num_worlds, 1), dtype=torch.int32)
-        self.dones = torch.zeros((num_worlds, 1), dtype=torch.int32)
-        self.rewards = torch.zeros((num_worlds, 1))
+        self.observations = torch.zeros((num_worlds, 1), dtype=torch.int32, device = device)
+        self.actions = torch.zeros((num_worlds, 1), dtype=torch.int32, device = device)
+        self.dones = torch.zeros((num_worlds, 1), dtype=torch.int32, device = device)
+        self.rewards = torch.zeros((num_worlds, 1), device = device)
         # Flag for reset per world
-        self.force_reset = torch.zeros(num_worlds, dtype=torch.int32)
+        self.force_reset = torch.zeros(num_worlds, dtype=torch.int32, device = device)
 
     def step(self):
         # Apply force_reset where needed

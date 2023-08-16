@@ -16,6 +16,7 @@ from tabular_world import TabularWorld
 arg_parser = argparse.ArgumentParser()
 arg_parser.add_argument('--num-worlds', type=int, required=True)
 arg_parser.add_argument('--num-steps', type=int, required=True)
+arg_parser.add_argument('--reward-scaling', type=float, default=1.)
 arg_parser.add_argument('--discount', type=float, default=0.99)
 arg_parser.add_argument('--policy', type=str, default='ucb')
 arg_parser.add_argument('--random-act-frac', type=float, default=0.)
@@ -37,7 +38,8 @@ random_state_type = args.random_state_type
 run_name = f"qlearngrid__{num_worlds}__{num_steps}__{args.seed}__{int(time.time())}_torch"
 
 # Start from the end cell...
-world = TabularWorld(args.world_name, num_worlds)
+device = 'cuda'
+world = TabularWorld(args.world_name, num_worlds, device)
 #world.vis_world()
 num_states = world.transitions.shape[0]
 num_actions = world.transitions.shape[1]
@@ -48,20 +50,20 @@ print(max_reward)
 
 # MODIFICATIONS FOR ATARI
 last_reward = max_reward
-end_reward = -1
-world.transition_rewards /= max_reward
+end_reward = 0
+world.transition_rewards /= args.reward_scaling
 # END MODIFICATIONS
 
-q_dict = torch.full((num_states, num_actions),0.) # Key: [obs, action], Value: [q]
-v_dict = torch.full((num_states,),0.) # Key: obs, Value: v
+q_dict = torch.full((num_states, num_actions),0., device = device) # Key: [obs, action], Value: [q]
+v_dict = torch.full((num_states,),0., device = device) # Key: obs, Value: v
 v_dict[num_states - 1] = end_reward # SHOULD THIS BE COMMENTED?
 
-visit_dict = torch.zeros((num_states, num_actions), dtype=int) # Key: [obs, action], Value: # visits
-visit_dict[0, :] = end_reward
+visit_dict = torch.zeros((num_states, num_actions), dtype=int, device = device) # Key: [obs, action], Value: # visits
+visit_dict[0, :] = 1
 
 # Create queue for DP
 # curr_obs = torch.tensor([[5,4]]).repeat(num_worlds, 1)
-curr_rewards = torch.zeros(num_worlds)
+curr_rewards = torch.zeros(num_worlds, device = device)
 
 wandb.init(
     project="cleanRL",
@@ -86,16 +88,16 @@ for i in range(num_steps):
     if random_state_frac > 0.:
         #print("We should not be here")
         # Random restarts
-        restarts = torch.rand(num_worlds) < random_state_frac
+        restarts = torch.rand(num_worlds, device = device) < random_state_frac
         if random_state_type == 0:
-            world.observations[restarts, :] = torch.zeros(torch.sum(restarts), 1).type(torch.int)
+            world.observations[restarts, :] = torch.zeros(torch.sum(restarts), 1, device = device).type(torch.int)
         elif random_state_type == 1:
             #grid_world.observations[restarts, :] = torch.cat([torch.randint(0, walls.shape[0], size=(torch.sum(restarts),1)), torch.randint(0, walls.shape[1], size=(torch.sum(restarts),1))], dim=1).type(torch.int)
-            world.observations[restarts, :] = torch.randint(0, num_states - 1, size=(torch.sum(restarts),)).type(torch.int)[:,None]
+            world.observations[restarts, :] = torch.randint(0, num_states - 1, size=(torch.sum(restarts),), device = device).type(torch.int)[:,None]
         elif random_state_type == 2:
             # Sample only from already-visited but underexplored states
             visited_states = torch.nonzero(visit_dict).type(torch.int)
-            world.observations[restarts, :] = visited_states[torch.randint(0, visited_states.shape[0], size=(torch.sum(restarts),)), :1]
+            world.observations[restarts, :] = visited_states[torch.randint(0, visited_states.shape[0], size=(torch.sum(restarts),), device = device), :1]
         curr_rewards[restarts] = 0
 
     curr_states = world.observations.clone()[:,0]
@@ -122,8 +124,8 @@ for i in range(num_steps):
     # Replace portion of actions with random
     if random_act_frac > 0.:
         #print("We should not be here")
-        random_rows = torch.rand(num_worlds) < random_act_frac
-        world.actions[random_rows, 0] = torch.randint(0, 4, size=(random_rows.sum(),)).type(torch.int)
+        random_rows = torch.rand(num_worlds, device = device) < random_act_frac
+        world.actions[random_rows, 0] = torch.randint(0, num_actions, size=(random_rows.sum(),), device = device).type(torch.int)
 
     curr_actions = world.actions.clone().flatten()
 
@@ -136,7 +138,11 @@ for i in range(num_steps):
     #print(dones[0])
 
     next_states = world.observations.clone()[:,0]
-    next_rewards = world.rewards.clone().flatten() * (1 - dones)
+    next_rewards = world.rewards.clone().flatten()# * (1 - dones)
+    #if next_rewards.sum() > 0:
+    #    print("Wow we made it")
+    #if dones.sum() > 0:
+    #    print("Weird")
 
     next_states[dones == 1] = num_states - 1
 
@@ -148,10 +154,10 @@ for i in range(num_steps):
     rewards_order = torch.argsort(curr_rewards)
     #print(rewards_order, q_dict[curr_states[rewards_order], curr_actions], v_dict[next_states[rewards_order]])
     q_dict[curr_states[rewards_order], curr_actions] = torch.max(
-        q_dict[curr_states[rewards_order], curr_actions], curr_rewards[rewards_order] + discount * v_dict[next_states[rewards_order]]
+        q_dict[curr_states[rewards_order], curr_actions], next_rewards[rewards_order] + discount * v_dict[next_states[rewards_order]] * (1 - dones)
     )
     v_dict[curr_states[rewards_order]] = torch.max(
-        v_dict[curr_states[rewards_order]], curr_rewards[rewards_order] + discount * v_dict[next_states[rewards_order]]
+        v_dict[curr_states[rewards_order]], next_rewards[rewards_order] + discount * v_dict[next_states[rewards_order]] * (1 - dones)
     )
     visit_dict[unique_states[:,0], unique_states[:,1]] += states_count
 
