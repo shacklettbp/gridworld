@@ -19,8 +19,8 @@ world = TabularWorld("/data/rl/effective-horizon/path/to/store/mdp/consolidated_
 num_states = world.transitions.shape[0]
 num_actions = world.transitions.shape[1]
 
-q_dict = torch.full((num_states, num_actions),-10000.) # Key: [obs, action], Value: [q]
-v_dict = torch.full((num_states,),-10000.) # Key: obs, Value: v
+q_dict = torch.full((num_states, num_actions),0.) # Key: [obs, action], Value: [q]
+v_dict = torch.full((num_states,),0.) # Key: obs, Value: v
 v_dict[num_states - 1] = 1.
 
 # Create queue for DP
