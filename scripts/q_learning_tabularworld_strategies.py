@@ -63,7 +63,7 @@ visit_dict[0, :] = 1
 
 # Create queue for DP
 # curr_obs = torch.tensor([[5,4]]).repeat(num_worlds, 1)
-curr_rewards = torch.zeros(num_worlds, device = device)
+cum_rewards = torch.zeros(num_worlds, device = device)
 
 wandb.init(
     project="cleanRL",
@@ -98,7 +98,7 @@ for i in range(num_steps):
             # Sample only from already-visited but underexplored states
             visited_states = torch.nonzero(visit_dict).type(torch.int)
             world.observations[restarts, :] = visited_states[torch.randint(0, visited_states.shape[0], size=(torch.sum(restarts),), device = device), :1]
-        curr_rewards[restarts] = 0
+        cum_rewards[restarts] = 0
 
     curr_states = world.observations.clone()[:,0]
 
@@ -151,17 +151,18 @@ for i in range(num_steps):
     #print(unique_states, states_count)
 
     # Clobbering of values prioritizes last assignment so get index sort of curr_rewards
-    rewards_order = torch.argsort(curr_rewards)
+    rewards_order = torch.argsort(next_rewards)
     #print(rewards_order, q_dict[curr_states[rewards_order], curr_actions], v_dict[next_states[rewards_order]])
     q_dict[curr_states[rewards_order], curr_actions] = torch.max(
-        q_dict[curr_states[rewards_order], curr_actions], next_rewards[rewards_order] + discount * v_dict[next_states[rewards_order]] * (1 - dones)
+        q_dict[curr_states[rewards_order], curr_actions], next_rewards[rewards_order] + discount * v_dict[next_states[rewards_order]] * (1 - dones[rewards_order])
     )
     v_dict[curr_states[rewards_order]] = torch.max(
-        v_dict[curr_states[rewards_order]], next_rewards[rewards_order] + discount * v_dict[next_states[rewards_order]] * (1 - dones)
+        v_dict[curr_states[rewards_order]], next_rewards[rewards_order] + discount * v_dict[next_states[rewards_order]] * (1 - dones[rewards_order])
     )
     visit_dict[unique_states[:,0], unique_states[:,1]] += states_count
 
-    curr_rewards = next_rewards * (1 - dones)
+    cum_rewards += next_rewards 
+    cum_rewards *= (1 - dones)
 
     # Write stats
     global_step = (i + 1)*num_worlds
