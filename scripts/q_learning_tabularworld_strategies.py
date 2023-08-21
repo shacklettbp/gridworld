@@ -22,9 +22,11 @@ arg_parser.add_argument('--policy', type=str, default='ucb')
 arg_parser.add_argument('--random-act-frac', type=float, default=0.)
 arg_parser.add_argument('--random-state-frac', type=float, default=0.)
 arg_parser.add_argument('--random-state-type', type=int, default=0)
+arg_parser.add_argument('--random-state-pow', type=float, default=0.)
 arg_parser.add_argument('--seed', type=int, default=0)
 arg_parser.add_argument('--tag', type=str, default=None)
 arg_parser.add_argument('--world-name', type=str, default="/data/rl/effective-horizon/path/to/store/mdp/consolidated_ignore_screen.npz")
+arg_parser.add_argument('--policy-eval', type=bool, default=False)
 args = arg_parser.parse_args()
 
 num_worlds = args.num_worlds
@@ -60,6 +62,9 @@ v_dict[num_states - 1] = end_reward # SHOULD THIS BE COMMENTED?
 
 visit_dict = torch.zeros((num_states, num_actions), dtype=int, device = device) # Key: [obs, action], Value: # visits
 visit_dict[0, :] = 1
+valid_states = torch.zeros((num_states), dtype=int, device = device) # Key: [obs, action], Value: # visits
+valid_states[0] = 1
+reward_cache = torch.zeros((num_states, num_actions), device = device) # Key: [obs, action], Value: # visits
 
 # Create queue for DP
 # curr_obs = torch.tensor([[5,4]]).repeat(num_worlds, 1)
@@ -98,13 +103,29 @@ for i in range(num_steps):
             # Sample only from already-visited but underexplored states
             visited_states = torch.nonzero(visit_dict).type(torch.int)
             world.observations[restarts, :] = visited_states[torch.randint(0, visited_states.shape[0], size=(torch.sum(restarts),), device = device), :1]
+        elif random_state_type == 3:
+            # We're gonna explore inverse to state-action counts
+            state_weights = (visit_dict.reshape(-1) + 0.0001).pow(args.random_state_pow)
+            state_weights = 1./state_weights
+            state_weights[valid_states.repeat_interleave(visit_dict.shape[1]) == 0] = 0 # Remove unseen from possibilities
+            sampled_sa = torch.multinomial(state_weights, num_worlds, replacement=True) # For errors
+            #print(world.observations)
+            #print(world.actions)
+            world.observations[:,0] = sampled_sa // visit_dict.shape[1]
+            world.actions[:,0] = sampled_sa % visit_dict.shape[1]
+            #print(world.observations)
+            #print(world.actions)
+
         cum_rewards[restarts] = 0
 
     curr_states = world.observations.clone()[:,0]
 
     #grid_world.actions[:, 0] = torch.randint(0, 4, size=(num_worlds,))
     action_qs = q_dict[curr_states]
-    if policy == "greedy":
+    if random_state_type == 3:
+        # Implemented joint with the state choosing
+        pass
+    elif policy == "greedy":
         world.actions[:, 0] = torch.argmax(action_qs, dim=1)
     elif policy == "ucb":
         # UCB
@@ -122,7 +143,7 @@ for i in range(num_steps):
         raise ValueError("Invalid policy")
     
     # Replace portion of actions with random
-    if random_act_frac > 0.:
+    if random_act_frac > 0. and random_state_type != 0:
         #print("We should not be here")
         random_rows = torch.rand(num_worlds, device = device) < random_act_frac
         world.actions[random_rows, 0] = torch.randint(0, num_actions, size=(random_rows.sum(),), device = device).type(torch.int)
@@ -144,6 +165,10 @@ for i in range(num_steps):
     #if dones.sum() > 0:
     #    print("Weird")
 
+    # Store reward observation
+    reward_cache[curr_states, curr_actions] = next_rewards
+
+    valid_states[next_states] = 1
     next_states[dones == 1] = num_states - 1
 
     unique_states, states_count = torch.unique(torch.cat([curr_states[:,None], curr_actions[:,None]],dim=1), dim=0, return_counts=True)
@@ -156,20 +181,34 @@ for i in range(num_steps):
     q_dict[curr_states[rewards_order], curr_actions] = torch.max(
         q_dict[curr_states[rewards_order], curr_actions], next_rewards[rewards_order] + discount * v_dict[next_states[rewards_order]] * (1 - dones[rewards_order])
     )
-    v_dict[curr_states[rewards_order]] = torch.max(
-        v_dict[curr_states[rewards_order]], next_rewards[rewards_order] + discount * v_dict[next_states[rewards_order]] * (1 - dones[rewards_order])
-    )
+    #v_dict[curr_states[rewards_order]] = torch.max(
+    #    v_dict[curr_states[rewards_order]], next_rewards[rewards_order] + discount * v_dict[next_states[rewards_order]] * (1 - dones[rewards_order])
+    #)
+    v_dict = torch.max(v_dict, q_dict.max(dim=1)[0]) # V is best q from state-action
     visit_dict[unique_states[:,0], unique_states[:,1]] += states_count
 
     cum_rewards += next_rewards 
     cum_rewards *= (1 - dones)
 
+    if args.policy_eval:
+        visited_states = torch.nonzero(visit_dict).type(torch.int)
+        #print(visited_states)
+        known_next_states = world.transitions[visited_states[:,0], visited_states[:,1]]
+        for j in range(20): # Or pick a diff number, assume transitions and rewards cached
+            q_dict[visited_states[:,0], visited_states[:,1]] = torch.max(
+                q_dict[visited_states[:,0], visited_states[:,1]], reward_cache[visited_states[:,0], visited_states[:,1]] + discount * v_dict[known_next_states]
+            )
+            v_dict = torch.max(v_dict, q_dict.max(dim=1)[0]) # V is best q from state-action
+
     # Write stats
+    #print("logging")
     global_step = (i + 1)*num_worlds
     writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
     writer.add_scalar("charts/avg_value", v_dict[curr_states[rewards_order]].mean().item(), global_step)
     writer.add_scalar("charts/rollout_value", v_dict[0], global_step)
     writer.add_scalar("charts/unvisited_states", visit_dict.sum(1).eq(0).sum().item(), global_step)
     writer.add_scalar("charts/underexplored_states", (visit_dict.sum(1) < 10).sum().item(), global_step)
+    writer.add_scalar("charts/unvisited_sa", visit_dict.eq(0).sum().item(), global_step)
+    writer.add_scalar("charts/underexplored_sa", (visit_dict < 10).sum().item(), global_step)
     writer.add_scalar("charts/exploration_variance", visit_dict.sum(1).float().std().item() / visit_dict.sum(1).float().mean().item(), global_step)
 
