@@ -23,10 +23,11 @@ arg_parser.add_argument('--random-act-frac', type=float, default=0.)
 arg_parser.add_argument('--random-state-frac', type=float, default=0.)
 arg_parser.add_argument('--random-state-type', type=int, default=0)
 arg_parser.add_argument('--random-state-pow', type=float, default=0.)
+arg_parser.add_argument('--rollout-steps', type=int, default=1)
 arg_parser.add_argument('--seed', type=int, default=0)
 arg_parser.add_argument('--tag', type=str, default=None)
 arg_parser.add_argument('--world-name', type=str, default="/data/rl/effective-horizon/path/to/store/mdp/consolidated_ignore_screen.npz")
-arg_parser.add_argument('--policy-eval', type=bool, default=False)
+arg_parser.add_argument('--policy-eval', type=int, default=0)
 args = arg_parser.parse_args()
 
 num_worlds = args.num_worlds
@@ -104,17 +105,23 @@ for i in range(num_steps):
             visited_states = torch.nonzero(visit_dict).type(torch.int)
             world.observations[restarts, :] = visited_states[torch.randint(0, visited_states.shape[0], size=(torch.sum(restarts),), device = device), :1]
         elif random_state_type == 3:
-            # We're gonna explore inverse to state-action counts
-            state_weights = (visit_dict.reshape(-1) + 0.0001).pow(args.random_state_pow)
-            state_weights = 1./state_weights
-            state_weights[valid_states.repeat_interleave(visit_dict.shape[1]) == 0] = 0 # Remove unseen from possibilities
-            sampled_sa = torch.multinomial(state_weights, num_worlds, replacement=True) # For errors
-            #print(world.observations)
-            #print(world.actions)
-            world.observations[:,0] = sampled_sa // visit_dict.shape[1]
-            world.actions[:,0] = sampled_sa % visit_dict.shape[1]
-            #print(world.observations)
-            #print(world.actions)
+            if i % args.rollout_steps == 0:
+                # We're gonna explore inverse to state-action counts
+                state_weights = (visit_dict.reshape(-1) + 0.0001).pow(args.random_state_pow)
+                state_weights = 1./state_weights
+                state_weights[valid_states.repeat_interleave(visit_dict.shape[1]) == 0] = 0 # Remove unseen from possibilities
+                sampled_sa = torch.multinomial(state_weights, num_worlds, replacement=True) # For errors
+                #print(world.observations)
+                #print(world.actions)
+                world.observations[:,0] = sampled_sa // visit_dict.shape[1]
+                world.actions[:,0] = sampled_sa % visit_dict.shape[1]
+                #print(world.observations)
+                #print(world.actions)
+            else:
+                # Only update actions, still sample inverse to counts
+                action_weights = (visit_dict[world.observations[:,0], :]  + 0.0001).pow(args.random_state_pow)
+                sampled_a = torch.multinomial(1./action_weights, 1)
+                world.actions[:,:] = sampled_a
 
         cum_rewards[restarts] = 0
 
@@ -190,7 +197,7 @@ for i in range(num_steps):
     cum_rewards += next_rewards 
     cum_rewards *= (1 - dones)
 
-    if args.policy_eval:
+    if args.policy_eval > 0:
         visited_states = torch.nonzero(visit_dict).type(torch.int)
         #print(visited_states)
         known_next_states = world.transitions[visited_states[:,0], visited_states[:,1]]
