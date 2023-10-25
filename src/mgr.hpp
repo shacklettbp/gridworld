@@ -28,12 +28,18 @@ public:
 
     MGR_EXPORT void step();
 
+#ifdef MADRONA_CUDA_SUPPORT
+    MGR_EXPORT void gpuRolloutStep(cudaStream_t strm, void **rollout_buffers);
+#endif
+
     MGR_EXPORT madrona::py::Tensor resetTensor() const;
     MGR_EXPORT madrona::py::Tensor actionTensor() const;
     MGR_EXPORT madrona::py::Tensor observationTensor() const;
     MGR_EXPORT madrona::py::Tensor rewardTensor() const;
     MGR_EXPORT madrona::py::Tensor doneTensor() const;
     MGR_EXPORT madrona::py::TrainInterface trainInterface() const;
+
+    MGR_EXPORT void triggerReset(int32_t world_idx);
 
 private:
     struct Impl;

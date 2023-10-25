@@ -165,6 +165,13 @@ NB_MODULE(_gridworld_madrona, m) {
         .def("observation_tensor", &Manager::observationTensor)
         .def("reward_tensor", &Manager::rewardTensor)
         .def("done_tensor", &Manager::doneTensor)
+        .def("jax", madrona::py::JAXInterface::buildEntry<
+                &Manager::trainInterface,
+                &Manager::step
+#ifdef MADRONA_CUDA_SUPPORT
+                , &Manager::gpuRolloutStep
+#endif
+            >())
     ;
 }
 

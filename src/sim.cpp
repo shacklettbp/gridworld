@@ -119,10 +119,33 @@ inline void tick(Engine &ctx,
     reward.r = cur_cell.reward;
 }
 
-void Sim::setupTasks(TaskGraph::Builder &builder, const Config &)
+#ifdef MADRONA_GPU_MODE
+template <typename ArchetypeT>
+TaskGraph::NodeID queueSortByWorld(TaskGraph::Builder &builder,
+                                   Span<const TaskGraph::NodeID> deps)
 {
-    builder.addToGraph<ParallelForNode<Engine, tick,
+    auto sort_sys =
+        builder.addToGraph<SortArchetypeNode<ArchetypeT, WorldID>>(
+            deps);
+    auto post_sort_reset_tmp =
+        builder.addToGraph<ResetTmpAllocNode>({sort_sys});
+
+    return post_sort_reset_tmp;
+}
+#endif
+
+void Sim::setupTasks(TaskGraphBuilder &builder, const Config &)
+{
+    auto tick_node = builder.addToGraph<ParallelForNode<Engine, tick,
         Action, Reset, GridPos, Reward, Done, CurStep>>({});
+
+#ifdef MADRONA_GPU_MODE
+    auto sort_agents = queueSortByWorld<Agent>(
+        builder, {tick_node});
+    (void)sort_agents;
+#else
+    (void)tick_node;
+#endif
 }
 
 Sim::Sim(Engine &ctx, const Config &cfg, const WorldInit &init)

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <madrona/taskgraph.hpp>
+#include <madrona/taskgraph_builder.hpp>
 #include <madrona/math.hpp>
 #include <madrona/custom_context.hpp>
 #include <madrona/components.hpp>
@@ -72,7 +72,7 @@ struct Sim : public madrona::WorldBase {
     static void registerTypes(madrona::ECSRegistry &registry,
                               const Config &cfg);
 
-    static void setupTasks(madrona::TaskGraph::Builder &builder,
+    static void setupTasks(madrona::TaskGraphBuilder &builder,
                            const Config &cfg);
 
     Sim(Engine &ctx, const Config &cfg, const WorldInit &init);
