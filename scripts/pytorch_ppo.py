@@ -42,7 +42,7 @@ arg_parser.add_argument('--num-worlds', type=int, required=True)
 arg_parser.add_argument('--num-updates', type=int, required=True)
 arg_parser.add_argument('--lr', type=float, default=0.01)
 arg_parser.add_argument('--gamma', type=float, default=0.998)
-arg_parser.add_argument('--steps-per-update', type=int, default=50)
+arg_parser.add_argument('--steps-per-update', type=int, default=4)
 arg_parser.add_argument('--gpu-id', type=int, default=0)
 arg_parser.add_argument('--entropy-loss-coef', type=float, default=0.3)
 arg_parser.add_argument('--value-loss-coef', type=float, default=0.5)
@@ -56,7 +56,7 @@ arg_parser.add_argument('--actor-rnn', action='store_true')
 arg_parser.add_argument('--critic-rnn', action='store_true')
 arg_parser.add_argument('--num-bptt-chunks', type=int, default=1)
 arg_parser.add_argument('--profile-report', action='store_true')
-arg_parser.add_argument('--seed', type=int, default=0)
+arg_parser.add_argument('--seed', type=int, default=5)
 arg_parser.add_argument('--tag', type=str, default=None)
 # Working DNN hyperparams:
 # --num-worlds 1024 --num-updates 1000 --dnn --lr 0.001 --entropy-loss-coef 0.1
@@ -66,6 +66,7 @@ arg_parser.add_argument('--tag', type=str, default=None)
 # --num-worlds 1024 --num-updates 1000 --dnn --lr 0.001 --entropy-loss-coef 0.3 --steps-per-update 10 --separate-value --num-channels 256 --gamma 0.998
 
 args = arg_parser.parse_args()
+torch.manual_seed(args.seed)
 
 with open(pathlib.Path(__file__).parent / "world_configs/test_world.pkl", 'rb') as handle:
     start_cell, end_cell, rewards, walls = pkl.load(handle)
@@ -109,16 +110,12 @@ class LearningCallback:
         fps = args.num_worlds * args.steps_per_update / update_time
         self.mean_fps += (fps - self.mean_fps) / update_id
 
-        if update_id != 1 and  update_id % 10 != 0:
+        if update_id != 1 and update_id % 10 != 0:
             return
 
         ppo = update_results.ppo_stats
-        #unique_states, states_count = torch.unique(torch.cat([update_results.obs, update_results.actions],dim=2).reshape(-1,3), dim=0, return_counts=True)
-        #print(unique_states, states_count)
-        #visit_dict[unique_states[:,0], unique_states[:,1], unique_states[:,2]] += states_count
 
         with torch.no_grad():
-
             reward_mean = update_results.rewards.mean().cpu().item()
             reward_min = update_results.rewards.min().cpu().item()
             reward_max = update_results.rewards.max().cpu().item()
@@ -131,12 +128,12 @@ class LearningCallback:
             advantage_min = update_results.advantages.min().cpu().item()
             advantage_max = update_results.advantages.max().cpu().item()
 
-            if args.dnn:
-                bootstrap_value_mean = update_results.bootstrap_values.mean().cpu().item()
-                bootstrap_value_min = update_results.bootstrap_values.min().cpu().item()
-                bootstrap_value_max = update_results.bootstrap_values.max().cpu().item()
+            bootstrap_value_mean = update_results.bootstrap_values.mean().cpu().item()
+            bootstrap_value_min = update_results.bootstrap_values.min().cpu().item()
+            bootstrap_value_max = update_results.bootstrap_values.max().cpu().item()
 
-        global_step = update_id*args.num_worlds*args.steps_per_update
+            vnorm_mu = learning_state.value_normalizer.mu.cpu().item()
+            vnorm_sigma = learning_state.value_normalizer.sigma.cpu().item()
 
         print(f"\nUpdate: {update_id}")
         print(f"    Loss: {ppo.loss: .3e}, A: {ppo.action_loss: .3e}, V: {ppo.value_loss: .3e}, E: {ppo.entropy_loss: .3e}")
@@ -144,13 +141,17 @@ class LearningCallback:
         print(f"    Rewards          => Avg: {reward_mean: .3e}, Min: {reward_min: .3e}, Max: {reward_max: .3e}")
         print(f"    Values           => Avg: {value_mean: .3e}, Min: {value_min: .3e}, Max: {value_max: .3e}")
         print(f"    Advantages       => Avg: {advantage_mean: .3e}, Min: {advantage_min: .3e}, Max: {advantage_max: .3e}")
-        if args.dnn:
-            print(f"    Bootstrap Values => Avg: {bootstrap_value_mean: .3e}, Min: {bootstrap_value_min: .3e}, Max: {bootstrap_value_max: .3e}")
+        print(f"    Bootstrap Values => Avg: {bootstrap_value_mean: .3e}, Min: {bootstrap_value_min: .3e}, Max: {bootstrap_value_max: .3e}")
+        print(f"    Returns          => Avg: {ppo.returns_mean}, σ: {ppo.returns_stddev}")
+        print(f"    Value Normalizer => Mean: {vnorm_mu: .3e}, σ: {vnorm_sigma :.3e}")
 
         if self.profile_report:
             print()
             print(f"    FPS: {fps:.0f}, Update Time: {update_time:.2f}, Avg FPS: {self.mean_fps:.0f}")
+            print(f"    PyTorch Memory Usage: {torch.cuda.memory_reserved() / 1024 / 1024 / 1024:.3f}GB (Reserved), {torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024:.3f}GB (Current)")
             profile.report()
+
+
 
 update_cb = LearningCallback(args.profile_report)
 
@@ -276,7 +277,7 @@ with torch.no_grad():
                 cur_rnn_states, torch.tensor([[r, c]], dtype=torch.int32, device=dev))
             V[r, c] = value[0, 0]
             action_probs[r, c, :] = action_dist.probs()[0][0]
-            logits[r, c, :] = action_dist.dists[0].logits[0]
+            logits[r, c, :] = action_dist.unnormalized_logits[0]
 
     for state in cur_rnn_states:
         state.zero_()
@@ -313,3 +314,12 @@ for r in range(num_rows):
     for c in range(num_cols):
         l = logits[r, c]
         print(f"  {r}, {c}: [{l[0]:.2f} {l[1]:.2f} {l[2]:.2f} {l[3]:.2f}]")
+
+print()
+if not args.dnn:
+    print("\nTabular Actor:")
+    for r in range(num_rows):
+        for c in range(num_cols):
+            flat = r * num_cols + c
+            l = trained.actor.tbl.policy[flat]
+            print(f"  {r}, {c}: [{l[0]:.2f} {l[1]:.2f} {l[2]:.2f} {l[3]:.2f}]")

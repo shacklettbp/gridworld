@@ -1,6 +1,5 @@
 import torch
 import numpy as np
-from madrona_learn import ActorCritic
 
 # Goal: define a policy class that samples actions in a way we can backprop/optimize or at least modify
 
@@ -11,7 +10,7 @@ class TabularPolicy(torch.nn.Module):
         self.num_actions = num_actions
         self.num_states = num_states
         self.greedy = greedy
-        self.policy = torch.nn.Parameter(torch.ones(num_states, num_actions) / num_actions) # Start uniform
+        self.policy = torch.nn.Parameter(torch.zeros(num_states, num_actions))
 
     def forward(self, states):
         # states is a batch of states

@@ -1,4 +1,5 @@
 import jax
+import jax.nn
 from jax import lax, random, numpy as jnp
 from jax.experimental import checkify
 import flax
@@ -37,7 +38,10 @@ import warnings
 #warnings.filterwarnings("error")
 import matplotlib.pyplot as plt
 import time
+import math
 from functools import partial
+
+madrona_learn.init(0.5)
 
 class PPOTabularActor(nn.Module):
     dtype: jnp.dtype
@@ -86,7 +90,7 @@ arg_parser.add_argument('--critic-rnn', action='store_true')
 arg_parser.add_argument('--num-bptt-chunks', type=int, default=1)
 arg_parser.add_argument('--pbt-ensemble-size', type=int, default=1)
 arg_parser.add_argument('--profile-report', action='store_true')
-arg_parser.add_argument('--seed', type=int, default=0)
+arg_parser.add_argument('--seed', type=int, default=5)
 arg_parser.add_argument('--tag', type=str, default=None)
 # Working DNN hyperparams:
 # --num-worlds 1024 --num-updates 1000 --dnn --lr 0.001 --entropy-loss-coef 0.1
@@ -129,10 +133,13 @@ init_sim_data_copy = frozen_dict.freeze(init_sim_data_copy)
 def metrics_cb(metrics, epoch, mb, train_state):
     return metrics
 
-def host_cb(update_idx, metrics, train_state_mgr):
-    print(f"Update: {update_idx}")
-
+def host_cb(update_id, metrics, train_state_mgr):
+    print(f"Update: {update_id}")
     metrics.pretty_print()
+    vnorm_mu = train_state_mgr.train_states.value_normalize_stats['mu'][0][0]
+    vnorm_sigma = train_state_mgr.train_states.value_normalize_stats['sigma'][0][0]
+    print(f"    Value Normalizer => Mean: {vnorm_mu: .3e}, σ: {vnorm_sigma: .3e}")
+    print()
 
     return ()
 
@@ -145,58 +152,64 @@ def iter_cb(update_idx, update_time, metrics, train_state_mgr):
              update_id, metrics, train_state_mgr)
     #cb(update_id, metrics, train_state_mgr)
 
+compute_dtype = jnp.float16 if args.fp16 else jnp.float32
+
 if args.dnn:
-    def process_obs(obs):
-        div = torch.tensor([[1 / float(num_rows), 1 / float(num_cols)]],
-            dtype=torch.float32, device=obs.device)
-        return obs.float() * div
+    def pytorch_initializer():
+        scale = 2 / (1 + math.sqrt(2) ** 2)
+        return jax.nn.initializers.variance_scaling(
+            scale, mode='fan_in', distribution='normal')
+
+    def prefix(obs, train):
+        div = jnp.array([[1 / float(num_rows), 1 / float(num_cols)]],
+            dtype=jnp.float32)
+        return jnp.asarray(
+            jnp.asarray(obs['self'], dtype=jnp.float32) * div, dtype=compute_dtype)
 
     def make_rnn_encoder(num_channels):
         return RecurrentBackboneEncoder(
             net = MLP(
-                input_dim = 2,
                 num_channels = num_channels // 2,
                 num_layers = 2,
+                dtype = compute_dtype,
+                weight_initializer = pytorch_initializer(),
             ),
             rnn = LSTM(
-                in_channels = num_channels // 2,
                 hidden_channels = num_channels,
                 num_layers = 1,
+                dtype = compute_dtype,
             )
         )
 
     def make_normal_encoder(num_channels):
-        return BackboneEncoder(MLP(
-            input_dim = 2,
-            num_channels = num_channels,
-            num_layers = 2,
-        ))
+        return BackboneEncoder(
+            net = MLP(
+                num_channels = num_channels,
+                num_layers = 2,
+                dtype = compute_dtype,
+                weight_initializer = pytorch_initializer(),
+            ),
+        )
 
     if args.separate_value:
         # Use different channel dims just to make sure everything is being passed correctly
         backbone = BackboneSeparate(
-            process_obs = process_obs,
+            prefix = prefix,
             actor_encoder = make_rnn_encoder(args.num_channels) if args.actor_rnn else make_normal_encoder(args.num_channels),
             critic_encoder = make_rnn_encoder(args.num_channels // 2) if args.critic_rnn else make_normal_encoder(args.num_channels // 2),
         )
-
-        actor_input = args.num_channels 
-        critic_input = args.num_channels // 2
     else:
         assert(args.actor_rnn == args.critic_rnn)
 
         backbone = BackboneShared(
-            process_obs = process_obs,
+            prefix = prefix,
             encoder = make_rnn_encoder(args.num_channels) if args.actor_rnn else make_normal_encoder(args.num_channels),
         )
 
-        actor_input = args.num_channels
-        critic_input = args.num_channels
-
     policy = ActorCritic(
         backbone = backbone,
-        actor = LinearLayerDiscreteActor([num_actions], actor_input),
-        critic = LinearLayerCritic(critic_input),
+        actor = DenseLayerDiscreteActor([num_actions], dtype=compute_dtype),
+        critic = DenseLayerCritic(dtype=compute_dtype),
     )
 else:
     policy = ActorCritic(
@@ -204,10 +217,9 @@ else:
             prefix = to1D,
             encoder = BackboneEncoder(lambda x, train: x),
         ),
-        actor = PPOTabularActor(dtype=(jnp.float16 if args.fp16 else jnp.float32),
-                                num_states=num_states, num_actions=num_actions),
-        critic = PPOTabularCritic(dtype=(jnp.float16 if args.fp16 else jnp.float32),
-            num_states=num_states),
+        actor = PPOTabularActor(
+            dtype=compute_dtype, num_states=num_states, num_actions=num_actions),
+        critic = PPOTabularCritic(dtype=compute_dtype, num_states=num_states),
     )
 
 cfg = TrainConfig(
@@ -221,16 +233,17 @@ cfg = TrainConfig(
     gamma = args.gamma,
     gae_lambda = 0.95,
     algo = PPOConfig(
-        num_mini_batches=1,
-        clip_coef=0.2,
-        value_loss_coef=args.value_loss_coef,
-        entropy_coef=args.entropy_loss_coef,
-        max_grad_norm=0.5,
-        num_epochs=1,
-        clip_value_loss=False,
+        num_mini_batches = 1,
+        clip_coef = 0.2,
+        value_loss_coef = args.value_loss_coef,
+        entropy_coef = args.entropy_loss_coef,
+        max_grad_norm = 0.5,
+        num_epochs = 1,
+        clip_value_loss = False,
+        huber_value_loss = False,
     ),
     mixed_precision = args.fp16,
-    seed = 5,
+    seed = args.seed,
     pbt_ensemble_size = args.pbt_ensemble_size,
     pbt_history_len = 1,
 )
@@ -345,20 +358,11 @@ for policy_idx in range(cfg.pbt_ensemble_size):
             l = logits[policy_idx, r, c]
             print(f"  {r}, {c}: [{l[0]:.2f} {l[1]:.2f} {l[2]:.2f} {l[3]:.2f}]")
 
-#if args.plot and not args.dnn:
-#    plt.imshow(policy.actor.tbl.policy[:,0].reshape(num_rows, num_cols).cpu().detach().numpy())
-#    plt.show()
-#    plt.imshow(policy.actor.tbl.policy[:,1].reshape(num_rows, num_cols).cpu().detach().numpy())
-#    plt.show()
-#    plt.imshow(policy.actor.tbl.policy[:,2].reshape(num_rows, num_cols).cpu().detach().numpy())
-#    plt.show()
-#    plt.imshow(policy.actor.tbl.policy[:,3].reshape(num_rows, num_cols).cpu().detach().numpy())
-#    plt.show()
-#    print(policy.actor.tbl.policy[:,0])
-#    print(policy.actor.tbl.policy[:,0].detach().numpy().reshape(num_cols, num_rows).swapaxes(0,1).copy().flatten())
-#    '''
-#    plt.imshow(policy.actor.tbl.policy[:,0].detach().numpy().reshape(num_cols, num_rows).swapaxes(0,1).copy().reshape(num_cols, num_rows))
-#    plt.show()
-#    plt.imshow(policy.critic.tbl.V.reshape(num_rows, num_cols).cpu().detach().numpy())
-#    plt.show()
-#    '''
+print()
+if not args.dnn:
+    print("\nTabular Actor:")
+    for r in range(num_rows):
+        for c in range(num_cols):
+            flat = r * num_cols + c
+            l = trained.train_states.params['actor']['tbl'][0, flat]
+            print(f"  {r}, {c}: [{l[0]:.2f} {l[1]:.2f} {l[2]:.2f} {l[3]:.2f}]")
