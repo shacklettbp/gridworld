@@ -26,12 +26,6 @@ args = arg_parser.parse_args()
 
 # New code
 
-class BinInfo:
-    def __init__(self, device):
-        self.count = torch.tensor(0, dtype=torch.int, device=device)
-        self.score = torch.tensor(0, dtype=torch.float32, device=device)
-        self.states = {}
-
 def sum_by_label(samples, labels):
     ''' select mean(samples), count() from samples group by labels order by labels asc '''
     #print(samples, labels)
@@ -79,8 +73,8 @@ class GoExplore:
         print("Num actions: ", self.num_actions)
         self.curr_returns = torch.zeros(num_worlds, device = device) # For tracking cumulative return of each state/bin
         self.num_exploration_steps = exploration_steps
-        self.binning = "no-op"
-        self.num_bins = self.num_states # We can change this later
+        self.binning = "random"
+        self.num_bins = self.num_states // 2 # We can change this later
         self.device = device
         self.state_score = torch.zeros(self.num_states, device=device)
         self.state_count = torch.zeros(self.num_states, device=device)
@@ -114,7 +108,7 @@ class GoExplore:
         # Compute bin_count and weights
         bin_count = sum_by_label_optimized(self.state_count[self.state_bins < self.num_states + 1], self.state_bins[self.state_bins < self.num_states + 1]
         )
-        weights = 1./(torch.log(bin_count) + 1)
+        weights = 1./(torch.sqrt(bin_count) + 1)
         # Sample bins
         sampled_bins = unique_bins[torch.multinomial(weights, num_samples=self.num_worlds, replacement=True).type(torch.int)]
         # Sample states from bins: either sample first occurrence in each bin (what's in the paper), or something better...
@@ -149,7 +143,7 @@ class GoExplore:
         return None
 
     def apply_binning_function(self, states):
-        if self.binning == "no-op":
+        if self.binning == "none":
             return states
         elif self.binning == "random":
             return torch.randint(0, self.num_bins, size=states.shape, device=self.device)
@@ -212,15 +206,18 @@ def train(args):
         print(goExplore.max_return)
         # Log the step
         global_step = (i + 1)*args.num_worlds
-        if args.use_logging:
+        if args.use_logging and i % 10 == 0:
             writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
             writer.add_scalar("charts/best_score", goExplore.max_return, global_step)
             # Compute number of unvisited and underexplored states from archive
             unvisited_states = torch.sum(goExplore.state_count == 0) # Need to fix this when num_states != num_bins
             underexplored_states = torch.sum(goExplore.state_count < 10) # Need to fix this 
+            # Compute the same for bins
+            visited_bins = torch.unique(goExplore.state_bins).shape[0]
             # Log it all
             writer.add_scalar("charts/unvisited_states", unvisited_states, global_step)
             writer.add_scalar("charts/underexplored_states", underexplored_states, global_step)
+            writer.add_scalar("charts/unvisited_bins", goExplore.num_bins - visited_bins + 1, global_step)
     # Return best score
     return best_score
 
