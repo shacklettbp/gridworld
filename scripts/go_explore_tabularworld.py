@@ -124,9 +124,6 @@ class GoExplore:
         self.state_bins = torch.full(
             (self.num_bins,), self.num_states + 1, device=device
         )  # num_states + 1 = unassigned, 0+ = bin number
-        self.bins_used = torch.zeros(
-            self.num_bins, device=device, dtype=torch.bool
-        )  # For analysis
 
         # Check if render data exists
         if os.path.exists(render_path):
@@ -252,7 +249,6 @@ class GoExplore:
         # Apply binning function to define bin for new states
         new_state_bins = self.apply_binning_function(states[new_states])
         self.state_bins[states[new_states]] = new_state_bins
-        self.bins_used[new_state_bins] = True
         # Now return the binning of all states
         return self.state_bins[states]
 
@@ -347,7 +343,7 @@ def train(args):
     print("\nBinning analysis:")
     print(" - Binning method: ", goExplore.binning)
     print(" - Number of bins: ", goExplore.num_bins)
-    print(" - Number of bins used: ", torch.sum(goExplore.bins_used).item())
+    print(" - Number of bins used: ", torch.unique(goExplore.state_bins).shape[0])
 
     # Return best score
     return best_score
