@@ -15,6 +15,7 @@ import argparse
 from torch.utils.tensorboard import SummaryWriter
 
 from tabular_world import TabularWorld
+from ssim import SSIM
 
 # New argparser here
 
@@ -134,6 +135,14 @@ class GoExplore:
             print("Rendering data exists.")
             # Move to device
             self.frames = torch.tensor(self.frames, device=device)
+            if len(self.frames.shape) == 3:
+                self.frames = self.frames.unsqueeze(1)
+            self.frames = self.frames.float() / 255.0
+
+            if self.binning == "ssim":
+                self.ssim_obj = SSIM(window_size=11, size_average=False)
+                self.ssim_refs = torch.zeros_like(self.frames[:num_bins])
+                self.num_bins_used = 0
         else:
             print("Rendering data does not exist.")
             if self.binning not in ["none", "random"]:
@@ -237,6 +246,28 @@ class GoExplore:
             # Hash the images to produce a tensor of shape (states.shape[0],)
             hashed_frames = hash_batch(frames)
             return hashed_frames % self.num_bins
+        elif self.binning == "ssim":
+            bins = torch.zeros_like(states)
+            for i, state in enumerate(states):
+                new_bin = False
+                bin = None
+                frame = self.frames[state]
+                if self.num_bins_used == 0:  # First bin
+                    new_bin = True
+                else:
+                    ssim_values = self.ssim_obj(
+                        frame.unsqueeze(0), self.ssim_refs[: self.num_bins_used]
+                    )
+                    if torch.max(ssim_values) < 0.9:
+                        new_bin = True
+                    else:
+                        bin = torch.argmax(ssim_values)
+                if new_bin:
+                    self.ssim_refs[self.num_bins_used] = frame
+                    bin = self.num_bins_used
+                    self.num_bins_used += 1
+                bins[i] = bin
+            return bins
         else:
             raise NotImplementedError
 
