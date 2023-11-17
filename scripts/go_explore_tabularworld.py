@@ -1,5 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import os
+
+from typing import Optional
 
 # Hack, will do proper setup.py
 import sys
@@ -17,17 +20,36 @@ from tabular_world import TabularWorld
 
 arg_parser = argparse.ArgumentParser()
 arg_parser.add_argument("--world-name", type=str, required=True)
+arg_parser.add_argument("--mdp_path", type=str, required=True)
+arg_parser.add_argument("--render_path", type=str, required=True)
 arg_parser.add_argument("--num-worlds", type=int, required=True)
 arg_parser.add_argument("--num-steps", type=int, required=True)
 arg_parser.add_argument("--exploration-steps", type=int, required=True)
 arg_parser.add_argument("--device", type=str, default="cuda")
 arg_parser.add_argument("--use-logging", action="store_true")
+arg_parser.add_argument("--binning-method", type=str, default="none")
 arg_parser.add_argument(
-    "--binning-method", type=str, options=["none", "random"], default="none"
+    "--num-bins",
+    type=int,
+    default=-1,
+    help="Number of bins (set to -1 to have one bin per state)",
 )
 args = arg_parser.parse_args()
 
+
 # New code
+def hash_batch(data: torch.Tensor) -> torch.Tensor:
+    assert data.dtype == torch.uint8
+    assert len(data.shape) >= 2
+
+    # Efficient hashing: Cumulative XOR across flattened dimensions
+    # We use torch.cumprod with bitwise XOR, then take the final element
+    flattened_data = data.flatten(start_dim=1)
+    xor_factor = torch.tensor(256, dtype=torch.uint8) - 1  # Factor for XOR operation
+    hash_values = torch.cumprod(flattened_data ^ xor_factor, dim=1)[:, -1]
+
+    assert hash_values.shape == (data.shape[0],)
+    return hash_values
 
 
 def sum_by_label(samples, labels):
@@ -74,9 +96,16 @@ def replace_keys_with_values(vector, keys, values):
 
 class GoExplore:
     def __init__(
-        self, world_name, num_worlds, exploration_steps, device, binning_method="none"
+        self,
+        world_path: str,
+        render_path: str,
+        num_worlds: int,
+        exploration_steps: int,
+        device: str,
+        binning_method: str = "none",
+        num_bins: Optional[int] = None,
     ):
-        self.worlds = TabularWorld(world_name, num_worlds, device)
+        self.worlds = TabularWorld(world_path, num_worlds, device)
         self.num_worlds = num_worlds
         self.num_states = self.worlds.transitions.shape[0]
         self.num_actions = self.worlds.transitions.shape[1]
@@ -87,14 +116,31 @@ class GoExplore:
         )  # For tracking cumulative return of each state/bin
         self.num_exploration_steps = exploration_steps
         self.binning = binning_method
-        self.num_bins = self.num_states // 2  # We can change this later
+        self.num_bins = num_bins if num_bins is not None else self.num_states
         self.device = device
         self.state_score = torch.zeros(self.num_states, device=device)
         self.state_count = torch.zeros(self.num_states, device=device)
         self.state_count[0] = 1
         self.state_bins = torch.full(
-            (self.num_states,), self.num_states + 1, device=device
+            (self.num_bins,), self.num_states + 1, device=device
         )  # num_states + 1 = unassigned, 0+ = bin number
+
+        # Check if render data exists
+        if os.path.exists(render_path):
+            self.frames = np.load(render_path)
+            assert (
+                self.frames.shape[0] == self.num_states
+            ), f"Render data has {self.frames.shape[0]} states, but the MDP has {self.num_states} states."
+            print("Rendering data exists.")
+            # Move to device
+            self.frames = torch.tensor(self.frames, device=device)
+        else:
+            print("Rendering data does not exist.")
+            if self.binning not in ["none", "random"]:
+                raise ValueError(
+                    f"Binning method {self.binning} not supported without rendering data."
+                )
+
         self.state_bins[torch.tensor([0], device=device)] = self.map_states_to_bins(
             torch.tensor([0], device=device)
         )  # Initialize
@@ -179,11 +225,18 @@ class GoExplore:
 
     def apply_binning_function(self, states):
         if self.binning == "none":
-            return states
+            return states % self.num_bins
         elif self.binning == "random":
             return torch.randint(
                 0, self.num_bins, size=states.shape, device=self.device
             )
+        elif self.binning == "pixel":
+            assert self.frames is not None, "Rendering data not provided."
+            # Get frames for states
+            frames = self.frames[states]
+            # Hash the images to produce a tensor of shape (states.shape[0],)
+            hashed_frames = hash_batch(frames)
+            return hashed_frames % self.num_bins
         else:
             raise NotImplementedError
 
@@ -216,12 +269,19 @@ class GoExplore:
 # Run training loop
 def train(args):
     # Create GoExplore object from args
+    world_name = args.world_name
+    print(f"Running Go-Explore on {world_name}")
+    mdp_path = os.path.join(args.mdp_path, f"{world_name}/consolidated.npz")
+    render_path = os.path.join(args.render_path, f"render_data_{world_name}.npy")
+    num_bins = args.num_bins if args.num_bins > 0 else None
     goExplore = GoExplore(
-        args.world_name,
+        mdp_path,
+        render_path,
         args.num_worlds,
         args.exploration_steps,
         args.device,
         args.binning_method,
+        num_bins,
     )
     # Set up wandb
     run_name = f"{args.world_name}_go_explore_{int(time.time())}"
