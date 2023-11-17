@@ -42,13 +42,13 @@ def hash_batch(data: torch.Tensor) -> torch.Tensor:
     assert data.dtype == torch.uint8
     assert len(data.shape) >= 2
 
-    # Efficient hashing: Cumulative XOR across flattened dimensions
-    # We use torch.cumprod with bitwise XOR, then take the final element
+    # Non efficient hashing: convert to batch size lists of integers, then use Python's hash function
+    # print("Data shape", data.shape)
     flattened_data = data.flatten(start_dim=1)
-    xor_factor = torch.tensor(256, dtype=torch.uint8) - 1  # Factor for XOR operation
-    hash_values = torch.cumprod(flattened_data ^ xor_factor, dim=1)[:, -1]
-
+    data_list = [tuple(row.tolist()) for row in flattened_data]
+    hash_values = torch.tensor([hash(x) for x in data_list], device=data.device)
     assert hash_values.shape == (data.shape[0],)
+    # print("Hashed values: ", hash_values)
     return hash_values
 
 
@@ -247,8 +247,9 @@ class GoExplore:
             self.state_bins[states] == self.num_states + 1
         ).flatten()
         # Apply binning function to define bin for new states
-        new_state_bins = self.apply_binning_function(states[new_states])
-        self.state_bins[states[new_states]] = new_state_bins
+        if new_states.shape[0] > 0:
+            new_state_bins = self.apply_binning_function(states[new_states])
+            self.state_bins[states[new_states]] = new_state_bins
         # Now return the binning of all states
         return self.state_bins[states]
 
