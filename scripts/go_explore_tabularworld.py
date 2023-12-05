@@ -17,6 +17,7 @@ from toolbox.printing import debug
 
 from tabular_world import TabularWorld
 from ssim import SSIM
+import faiss
 
 # New argparser here
 
@@ -150,6 +151,15 @@ class GoExplore:
                 render_path.replace(".npy", "_clip_indices.npy")
             )
             self.clip_indices = torch.tensor(self.clip_indices, device=device)
+        elif self.binning == "clip_live":
+            self.clip_values = np.load(render_path.replace(".npy", "_clip.npy"))
+            self.clip_values = torch.tensor(self.clip_values, device=device)
+            self.recompute_every = self.num_bins // 2
+            self.num_centroids = 0
+            self.centroids = torch.zeros(
+                (self.num_bins, self.clip_values.shape[1]), device=device
+            )
+            self.last_update = -self.recompute_every
         else:
             print("Rendering data does not exist.")
             if self.binning not in ["none", "random"]:
@@ -183,30 +193,30 @@ class GoExplore:
             ]
         inverse_bin = sampled_states
         unique_bins = unique_groups
-        # debug(first_occurrences)
-        # debug(sorted_groups[first_occurrences])
+        # # debug(first_occurrences)
+        # # debug(sorted_groups[first_occurrences])
         # # Mask to identify first occurrences in the sorted array
         # first_occurrence_mask = torch.zeros_like(
         #     sorted_groups, dtype=torch.bool
         # ).scatter_(0, first_occurrences, 1)
-        # debug(sorted_groups[first_occurrence_mask])
+        # # debug(sorted_groups[first_occurrence_mask])
 
         # return unique_groups, sorted_states[first_occurrence_mask]
 
-        # debug(states)
-        # debug(groups)
+        # # debug(states)
+        # # debug(groups)
         # # Remove value len(groups) + 1 from groups
         # groups = groups[groups < self.num_states + 1]
         # # Sort groups and states based on groups
         # sorted_bins, indices = groups.sort()
-        # debug(sorted_bins)
-        # debug(indices)
+        # # debug(sorted_bins)
+        # # debug(indices)
         # sorted_states = states[indices]
 
         # # Find the unique groups and the first occurrence of each group
         # unique_bins, state_to_bin = torch.unique(sorted_bins, return_inverse=True)
-        # debug(unique_bins)
-        # debug(state_to_bin)
+        # # debug(unique_bins)
+        # # debug(state_to_bin)
 
         # # Shuffle so that we dont always get the first occurrence
         # shuffled_indices = torch.randperm(state_to_bin.shape[0], device=groups.device)
@@ -216,9 +226,9 @@ class GoExplore:
         #     sorted_bins, dtype=torch.bool
         # ).scatter_(0, state_to_bin, 1)
         # inverse_bin = sorted_states[first_occurrence_mask]
-        # debug(unique_bins)
-        # debug(inverse_bin)
-        # debug(self.state_bins[inverse_bin])
+        # # debug(unique_bins)
+        # # debug(inverse_bin)
+        # # debug(self.state_bins[inverse_bin])
 
         return unique_bins, inverse_bin
 
@@ -231,8 +241,8 @@ class GoExplore:
         unique_bins, bin_inverse = self.get_first_elements_unsorted_groups(
             torch.arange(self.num_states, device=self.device), self.state_bins
         )
-        # debug(unique_bins)
-        # debug(bin_inverse)
+        # # debug(unique_bins)
+        # # debug(bin_inverse)
         bin_inverse = bin_inverse[unique_bins < self.num_states + 1]
         unique_bins = unique_bins[unique_bins < self.num_states + 1]
         # Compute bin_count and weights
@@ -326,6 +336,105 @@ class GoExplore:
         elif self.binning == "clip":
             assert self.clip_indices is not None, "Rendering data not provided."
             return self.clip_indices[states]
+        elif self.binning == "clip_live":
+            new_bins = torch.zeros_like(states)
+            # debug(states)
+            unique_states = torch.unique(states)
+            # debug(unique_states)
+
+            num_new_states = len(unique_states)
+            num_centroids_still_available = self.num_bins - self.num_centroids
+            num_centroids_before_recompute = self.last_update + self.recompute_every
+            # debug(num_new_states)
+            # debug(num_centroids_still_available)
+            # debug(num_centroids_before_recompute)
+
+            if (
+                num_new_states
+                >= num_centroids_still_available + num_centroids_before_recompute
+            ):
+                print("RETRAIN")
+                # Needs to recompute KMeans
+                self.last_update = 0
+
+                # Prepare the data to kmeans i.e. the state_to_bin
+                # that do not map to self.num_bins + 1
+                # plus the new states
+                # Prepare two arrays:
+                # - clip_values: the values of the states that are not
+                #   mapped to self.num_bins + 1
+                # - state_indices: the indices of the states that are
+                #   not mapped to self.num_bins + 1
+                states_indices = torch.nonzero(
+                    self.state_bins != self.num_states + 1
+                ).flatten()
+                # Add the new states
+                states_indices = torch.cat(
+                    (states_indices, torch.tensor(unique_states, device=self.device))
+                )
+                states_indices = states_indices[states_indices < self.num_states]
+                clip_values = self.clip_values[states_indices]
+                # debug(clip_values)
+                # debug(states_indices)
+
+                # Recompute centroids
+                ncentroids = self.num_bins
+                # debug(ncentroids)
+                niter = 50
+                verbose = False
+                d = self.clip_values.shape[1]
+                self.kmeans = faiss.Kmeans(d, ncentroids, niter=niter, verbose=verbose)
+                self.kmeans.train(clip_values.cpu().numpy())
+                self.centroids = torch.tensor(self.kmeans.centroids, device=self.device)
+                # debug(self.centroids)
+
+                # Update bins
+                bins = torch.full(
+                    (self.num_states,), self.num_states + 1, device=self.device
+                )
+                _, I = self.kmeans.index.search(clip_values.cpu().numpy(), 1)
+                # debug(torch.unique(torch.tensor(I.squeeze())))
+                bins[states_indices] = torch.tensor(I.squeeze(), device=self.device)
+                self.state_bins = bins.clone()
+                # debug(I)
+                # debug(bins[states_indices])
+                # debug(torch.unique(bins))
+
+                # COunt number of states not assigned to self.num_states + 1
+                num = torch.sum(bins != self.num_states + 1)
+                # debug(num)
+
+                # Get the bins for the new states
+                new_bins = bins[states]
+                self.num_centroids = ncentroids
+                print("New bins computed")
+                # # debug(new_bins)
+                return new_bins
+
+            # No recompute will be required
+            # First let's add centroids if we still can
+            if num_centroids_still_available > 0:
+                # debug(self.clip_values[unique_states])
+                temp = self.centroids[
+                    self.num_centroids : self.num_centroids + num_new_states
+                ]
+                # debug(temp)
+                # debug(self.num_centroids)
+                # debug(self.num_centroids + num_new_states)
+                # debug(self.centroids)
+                self.centroids[
+                    self.num_centroids : self.num_centroids + num_new_states
+                ] = self.clip_values[unique_states]
+                self.num_centroids += num_new_states
+                # debug(self.centroids)
+            else:
+                clip_values = self.clip_values[states]
+                _, I = self.kmeans.index.search(clip_values.cpu().numpy(), 1)
+                new_bins = torch.tensor(I.flatten(), device=self.device)
+                self.last_update -= num_new_states
+
+            # # debug(new_bins)
+            return new_bins
         else:
             raise NotImplementedError
 
