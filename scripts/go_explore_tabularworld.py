@@ -179,58 +179,20 @@ class GoExplore:
         sorted_states = states[indices]
 
         # Find the unique groups and the first occurrence of each group
-        unique_groups, group_to_unique_group = torch.unique(
-            sorted_groups, return_inverse=True
-        )
+        unique_groups = torch.unique(sorted_groups)
 
         # Sample
         sampled_states = torch.zeros_like(unique_groups)
+        # TODO: This is clearly terrible in terms of performance but works and fo now we don't care
+        # Optimize this later.
         for i, group in enumerate(unique_groups):
             idx_part_of_group = torch.nonzero(sorted_groups == group).flatten()
             # Sample from the indices that are part of the group (randomly)
             sampled_states[i] = sorted_states[
                 idx_part_of_group[torch.randint(0, idx_part_of_group.shape[0], (1,))]
             ]
-        inverse_bin = sampled_states
-        unique_bins = unique_groups
-        # # debug(first_occurrences)
-        # # debug(sorted_groups[first_occurrences])
-        # # Mask to identify first occurrences in the sorted array
-        # first_occurrence_mask = torch.zeros_like(
-        #     sorted_groups, dtype=torch.bool
-        # ).scatter_(0, first_occurrences, 1)
-        # # debug(sorted_groups[first_occurrence_mask])
 
-        # return unique_groups, sorted_states[first_occurrence_mask]
-
-        # # debug(states)
-        # # debug(groups)
-        # # Remove value len(groups) + 1 from groups
-        # groups = groups[groups < self.num_states + 1]
-        # # Sort groups and states based on groups
-        # sorted_bins, indices = groups.sort()
-        # # debug(sorted_bins)
-        # # debug(indices)
-        # sorted_states = states[indices]
-
-        # # Find the unique groups and the first occurrence of each group
-        # unique_bins, state_to_bin = torch.unique(sorted_bins, return_inverse=True)
-        # # debug(unique_bins)
-        # # debug(state_to_bin)
-
-        # # Shuffle so that we dont always get the first occurrence
-        # shuffled_indices = torch.randperm(state_to_bin.shape[0], device=groups.device)
-
-        # # Mask to identify first occurrences in the sorted array
-        # first_occurrence_mask = torch.zeros_like(
-        #     sorted_bins, dtype=torch.bool
-        # ).scatter_(0, state_to_bin, 1)
-        # inverse_bin = sorted_states[first_occurrence_mask]
-        # # debug(unique_bins)
-        # # debug(inverse_bin)
-        # # debug(self.state_bins[inverse_bin])
-
-        return unique_bins, inverse_bin
+        return unique_groups, sampled_states
 
     # Step 1: Select state from archive
     # Uses: self.archive
