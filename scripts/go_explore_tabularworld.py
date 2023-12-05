@@ -13,6 +13,7 @@ import time
 import wandb
 import argparse
 from torch.utils.tensorboard import SummaryWriter
+from toolbox.printing import debug
 
 from tabular_world import TabularWorld
 from ssim import SSIM
@@ -35,12 +36,13 @@ arg_parser.add_argument(
     default=-1,
     help="Number of bins (set to -1 to have one bin per state)",
 )
+arg_parser.add_argument("--run-name", type=str, default=None)
 args = arg_parser.parse_args()
 
 
 # New code
 def hash_batch(data: torch.Tensor) -> torch.Tensor:
-    assert data.dtype == torch.uint8
+    # assert data.dtype == torch.uint8
     assert len(data.shape) >= 2
 
     # Non efficient hashing: convert to batch size lists of integers, then use Python's hash function
@@ -123,11 +125,11 @@ class GoExplore:
         self.state_count = torch.zeros(self.num_states, device=device)
         self.state_count[0] = 1
         self.state_bins = torch.full(
-            (self.num_bins,), self.num_states + 1, device=device
+            (self.num_states,), self.num_states + 1, device=device
         )  # num_states + 1 = unassigned, 0+ = bin number
 
         # Check if render data exists
-        if os.path.exists(render_path):
+        if os.path.exists(render_path) and self.binning in ["pixel", "ssim"]:
             self.frames = np.load(render_path)
             assert (
                 self.frames.shape[0] == self.num_states
@@ -143,6 +145,11 @@ class GoExplore:
                 self.ssim_obj = SSIM(window_size=11, size_average=False)
                 self.ssim_refs = torch.zeros_like(self.frames[:num_bins])
                 self.num_bins_used = 0
+        elif self.binning == "clip":
+            self.clip_indices = np.load(
+                render_path.replace(".npy", "_clip_indices.npy")
+            )
+            self.clip_indices = torch.tensor(self.clip_indices, device=device)
         else:
             print("Rendering data does not exist.")
             if self.binning not in ["none", "random"]:
@@ -162,15 +169,58 @@ class GoExplore:
         sorted_states = states[indices]
 
         # Find the unique groups and the first occurrence of each group
-        unique_groups, first_occurrences = torch.unique(
+        unique_groups, group_to_unique_group = torch.unique(
             sorted_groups, return_inverse=True
         )
-        # Mask to identify first occurrences in the sorted array
-        first_occurrence_mask = torch.zeros_like(
-            sorted_groups, dtype=torch.bool
-        ).scatter_(0, first_occurrences, 1)
 
-        return unique_groups, sorted_states[first_occurrence_mask]
+        # Sample
+        sampled_states = torch.zeros_like(unique_groups)
+        for i, group in enumerate(unique_groups):
+            idx_part_of_group = torch.nonzero(sorted_groups == group).flatten()
+            # Sample from the indices that are part of the group (randomly)
+            sampled_states[i] = sorted_states[
+                idx_part_of_group[torch.randint(0, idx_part_of_group.shape[0], (1,))]
+            ]
+        inverse_bin = sampled_states
+        unique_bins = unique_groups
+        # debug(first_occurrences)
+        # debug(sorted_groups[first_occurrences])
+        # # Mask to identify first occurrences in the sorted array
+        # first_occurrence_mask = torch.zeros_like(
+        #     sorted_groups, dtype=torch.bool
+        # ).scatter_(0, first_occurrences, 1)
+        # debug(sorted_groups[first_occurrence_mask])
+
+        # return unique_groups, sorted_states[first_occurrence_mask]
+
+        # debug(states)
+        # debug(groups)
+        # # Remove value len(groups) + 1 from groups
+        # groups = groups[groups < self.num_states + 1]
+        # # Sort groups and states based on groups
+        # sorted_bins, indices = groups.sort()
+        # debug(sorted_bins)
+        # debug(indices)
+        # sorted_states = states[indices]
+
+        # # Find the unique groups and the first occurrence of each group
+        # unique_bins, state_to_bin = torch.unique(sorted_bins, return_inverse=True)
+        # debug(unique_bins)
+        # debug(state_to_bin)
+
+        # # Shuffle so that we dont always get the first occurrence
+        # shuffled_indices = torch.randperm(state_to_bin.shape[0], device=groups.device)
+
+        # # Mask to identify first occurrences in the sorted array
+        # first_occurrence_mask = torch.zeros_like(
+        #     sorted_bins, dtype=torch.bool
+        # ).scatter_(0, state_to_bin, 1)
+        # inverse_bin = sorted_states[first_occurrence_mask]
+        # debug(unique_bins)
+        # debug(inverse_bin)
+        # debug(self.state_bins[inverse_bin])
+
+        return unique_bins, inverse_bin
 
     # Step 1: Select state from archive
     # Uses: self.archive
@@ -181,6 +231,8 @@ class GoExplore:
         unique_bins, bin_inverse = self.get_first_elements_unsorted_groups(
             torch.arange(self.num_states, device=self.device), self.state_bins
         )
+        # debug(unique_bins)
+        # debug(bin_inverse)
         bin_inverse = bin_inverse[unique_bins < self.num_states + 1]
         unique_bins = unique_bins[unique_bins < self.num_states + 1]
         # Compute bin_count and weights
@@ -258,7 +310,10 @@ class GoExplore:
                     ssim_values = self.ssim_obj(
                         frame.unsqueeze(0), self.ssim_refs[: self.num_bins_used]
                     )
-                    if torch.max(ssim_values) < 0.9:
+                    if (
+                        torch.max(ssim_values) < 0.97
+                        and self.num_bins_used < self.num_bins
+                    ):
                         new_bin = True
                     else:
                         bin = torch.argmax(ssim_values)
@@ -268,6 +323,9 @@ class GoExplore:
                     self.num_bins_used += 1
                 bins[i] = bin
             return bins
+        elif self.binning == "clip":
+            assert self.clip_indices is not None, "Rendering data not provided."
+            return self.clip_indices[states]
         else:
             raise NotImplementedError
 
@@ -315,7 +373,11 @@ def train(args):
         num_bins,
     )
     # Set up wandb
-    run_name = f"{args.world_name}_go_explore_{int(time.time())}"
+    run_name = (
+        args.run_name
+        if args.run_name
+        else f"{args.world_name}_go_explore_{int(time.time())}"
+    )
     if args.use_logging:
         wandb.init(
             project="go_explore_tabularworld",
@@ -346,7 +408,7 @@ def train(args):
         print(f"Step: {i} - Max return: {goExplore.max_return}")
         # Log the step
         global_step = (i + 1) * args.num_worlds
-        if args.use_logging and i % 10 == 0:
+        if args.use_logging:
             writer.add_scalar(
                 "charts/SPS", int(global_step / (time.time() - start_time)), global_step
             )
