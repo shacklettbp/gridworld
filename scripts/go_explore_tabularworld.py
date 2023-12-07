@@ -146,6 +146,24 @@ class GoExplore:
                 self.ssim_obj = SSIM(window_size=11, size_average=False)
                 self.ssim_refs = torch.zeros_like(self.frames[:num_bins])
                 self.num_bins_used = 0
+        elif self.binning.startswith("minigrid"):
+            self.frames = np.load(render_path)
+            assert (
+                self.frames.shape[0] == self.num_states
+            ), f"Render data has {self.frames.shape[0]} states, but the MDP has {self.num_states} states."
+            print("Rendering data exists.")
+            self.frames = torch.tensor(self.frames, device=device)
+            debug(self.frames)
+            debug(self.frames[:, 0])
+            debug(self.frames[:, 1])
+            self.xmin = torch.min(self.frames[:, 0]).item()
+            self.ymin = torch.min(self.frames[:, 1]).item()
+            self.xmax = torch.max(self.frames[:, 0]).item()
+            self.ymax = torch.max(self.frames[:, 1]).item()
+            debug(self.xmin)
+            debug(self.xmax)
+            debug(self.ymin)
+            debug(self.ymax)
         elif self.binning == "clip":
             self.clip_indices = np.load(
                 render_path.replace(".npy", "_clip_indices.npy")
@@ -397,6 +415,18 @@ class GoExplore:
 
             # # debug(new_bins)
             return new_bins
+        elif self.binning == "minigrid_pos":
+            obs = self.frames[states]
+            x = obs[:, 0] - self.xmin + 1
+            y = obs[:, 1] - self.ymin + 1
+            o = obs[:, 2] + 1
+            d = obs[:, 3]
+            bins = (x * y * o * d - 1).long()
+        elif self.binning == "minigrid_pixel":
+            frames = self.frames[states][:, 4:]
+            # Hash the images to produce a tensor of shape (states.shape[0],)
+            hashed_frames = hash_batch(frames)
+            return hashed_frames % self.num_bins
         else:
             raise NotImplementedError
 
